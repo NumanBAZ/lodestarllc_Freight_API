@@ -1,0 +1,2 @@
+cd "C:\Users\mnbaz\Documents\lodestarllc_Freight_API"
+.\.venv\Scripts\python.exe -m uvicorn app:app --reload

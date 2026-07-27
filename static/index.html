@@ -1,171 +1,141 @@
 <!doctype html>
-<html lang="tr">
+<html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='18' fill='%230D1830'/%3E%3Cpath d='M32 15l4.8 12.2L49 32l-12.2 4.8L32 49l-4.8-12.2L15 32l12.2-4.8L32 15z' fill='white'/%3E%3C/svg%3E" />
-  <meta name="description" content="Gönderiniz için güncel taşıma tekliflerini karşılaştırın." />
-  <title>Lodestar Freight | Anında Taşıma Teklifi</title>
+  <meta name="theme-color" content="#0B0D12" />
+  <meta name="description" content="Compare current LTL and FTL freight rates with Lodestar Freight." />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='18' fill='%2307142B'/%3E%3Cpath d='M32 15l4.8 12.2L49 32l-12.2 4.8L32 49l-4.8-12.2L15 32l12.2-4.8L32 15z' fill='%23F4B800'/%3E%3C/svg%3E" />
+  <title>Lodestar Freight | Instant Freight Quote</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&amp;display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="/static/style.css" />
 </head>
 <body>
   <header class="app-header">
     <div class="header-inner">
-      <a class="wordmark" href="/" aria-label="Lodestar Freight ana sayfa">
+      <a class="wordmark" href="/" aria-label="Lodestar Freight home">
         <span class="wordmark-symbol" aria-hidden="true">✦</span>
         <span class="wordmark-copy"><strong>Lodestar</strong><small>FREIGHT</small></span>
       </a>
 
-      <a class="header-nav-link" href="#quoteCard">Anında Teklif</a>
+      <nav class="header-nav" aria-label="Primary navigation">
+        <a href="#instant-quote">Instant Quote</a>
+        <a href="#services">Services</a>
+        <a href="#contact">Contact</a>
+      </nav>
 
       <div class="header-actions">
-        <a id="headerPhone" class="phone-link" href="#" aria-disabled="true">
-          <span class="phone-symbol" aria-hidden="true">☎</span>
-          <span><small>Telefonla destek</small><strong id="headerPhoneText">Bize ulaşın</strong></span>
+        <a id="headerPhone" class="phone-link" href="#contact" aria-label="Call Lodestar Freight">
+          <span aria-hidden="true">●</span>
+          <span><small>Phone support</small><strong id="headerPhoneText">Contact us</strong></span>
         </a>
-        <a class="header-cta" href="#quoteCard">Teklif Al <span aria-hidden="true">↗</span></a>
+        <a class="header-cta" href="#instant-quote">Get a Quote <span aria-hidden="true">→</span></a>
       </div>
     </div>
   </header>
 
-  <main>
-    <section class="hero-section" aria-labelledby="heroTitle">
-      <div class="hero-eyebrow"><span aria-hidden="true"></span> LOJİSTİKTE DAHA AKILLI SEÇİM</div>
-      <h1 id="heroTitle">Yükünüz İçin En Uygun <br /><em>Taşıma Teklifini Bulun</em></h1>
-      <p>Gönderi bilgilerinizi paylaşın; güncel fiyatları, taşıyıcıları ve teslimat sürelerini tek ekranda karşılaştırın.</p>
-      <div class="trust-list" aria-label="Hizmet avantajları">
-        <span><i aria-hidden="true">✓</i> Güncel taşıyıcı fiyatları</span>
-        <span><i aria-hidden="true">✓</i> Şeffaf karşılaştırma</span>
-        <span><i aria-hidden="true">✓</i> Uzman operasyon desteği</span>
-      </div>
+  <main id="instant-quote">
+    <section class="quote-intro" aria-labelledby="heroTitle">
+      <p class="quote-label">FREIGHT PRICING</p>
+      <h1 id="heroTitle">Get an Instant Freight Quote</h1>
     </section>
 
-    <section id="quoteCard" class="quote-card" aria-labelledby="quoteTitle">
-      <div class="quote-card-head">
+    <section class="quote-card" aria-labelledby="formTitle">
+      <div class="quote-card-heading">
         <div>
-          <span class="section-label">ANINDA TEKLİF</span>
-          <h2 id="quoteTitle">Gönderinizi planlayın</h2>
+          <h2 id="formTitle">Shipment Details</h2>
+          <p>Enter your route and load information.</p>
         </div>
-        <p>Üç kısa adımda yükünüze uygun seçenekleri bulalım.</p>
+        <p class="progress-line" aria-label="Quote progress">Route <span>→</span> Load Details <span>→</span> Quote</p>
       </div>
 
-      <ol class="progress-steps" aria-label="Teklif adımları">
-        <li class="progress-item is-active" data-progress="1" aria-current="step">
-          <span class="progress-number">1</span>
-          <span class="progress-copy"><strong>Rota</strong><small>Gönderi noktaları</small></span>
-        </li>
-        <li class="progress-divider" aria-hidden="true"><span></span></li>
-        <li class="progress-item" data-progress="2">
-          <span class="progress-number">2</span>
-          <span class="progress-copy"><strong>Yük Bilgileri</strong><small>Ölçü ve içerik</small></span>
-        </li>
-        <li class="progress-divider" aria-hidden="true"><span></span></li>
-        <li class="progress-item" data-progress="3">
-          <span class="progress-number">3</span>
-          <span class="progress-copy"><strong>Ek Hizmetler</strong><small>Son tercihler</small></span>
-        </li>
-      </ol>
-
       <form id="quoteForm" novalidate>
-        <section class="form-panel is-active" data-panel="1" aria-labelledby="routeTitle">
-          <div class="panel-heading">
-            <span class="panel-icon" aria-hidden="true">↗</span>
-            <div><h3 id="routeTitle">Rotanızı belirleyin</h3><p>Başlangıç, varış ve pickup bilgilerini girin.</p></div>
+        <section class="form-section route-section" aria-labelledby="routeTitle">
+          <div class="section-heading-inline">
+            <h3 id="routeTitle">Route</h3>
           </div>
-
-          <div class="form-grid form-grid-three">
+          <div class="route-grid">
             <label class="form-field">
-              <span class="field-title"><i aria-hidden="true">A</i> Nereden <small>ZIP</small></span>
-              <input id="originZip" type="text" inputmode="numeric" autocomplete="postal-code" maxlength="5" pattern="[0-9]{5}" placeholder="Örn. 90012" required />
-              <span class="validation-message">5 haneli bir ZIP kodu girin.</span>
+              <span>Origin ZIP Code</span>
+              <input id="originZip" type="text" inputmode="numeric" autocomplete="postal-code" maxlength="5" pattern="[0-9]{5}" placeholder="e.g. 90012" required />
+              <small class="validation-message">Enter a valid 5-digit ZIP code.</small>
             </label>
             <label class="form-field">
-              <span class="field-title"><i aria-hidden="true">B</i> Nereye <small>ZIP</small></span>
-              <input id="destinationZip" type="text" inputmode="numeric" autocomplete="postal-code" maxlength="5" pattern="[0-9]{5}" placeholder="Örn. 94105" required />
-              <span class="validation-message">5 haneli bir ZIP kodu girin.</span>
+              <span>Destination ZIP Code</span>
+              <input id="destinationZip" type="text" inputmode="numeric" autocomplete="postal-code" maxlength="5" pattern="[0-9]{5}" placeholder="e.g. 94105" required />
+              <small class="validation-message">Enter a valid 5-digit ZIP code.</small>
             </label>
             <label class="form-field">
-              <span class="field-title"><i aria-hidden="true">◷</i> Pickup tarihi</span>
+              <span>Pickup Date</span>
               <input id="pickupDate" type="date" required />
-              <span class="validation-message">Pickup tarihi seçin.</span>
+              <small class="validation-message">Select a valid pickup date.</small>
             </label>
-          </div>
-
-          <fieldset class="transport-fieldset">
-            <legend>Taşıma tipi</legend>
-            <div class="transport-grid">
-              <label class="transport-option">
-                <input type="radio" name="quoteType" value="quote-ltl-market" checked />
-                <span class="transport-symbol">LTL</span>
-                <span class="transport-copy"><strong>LTL</strong><small>Parsiyel yük</small></span>
-                <span class="selection-mark" aria-hidden="true">✓</span>
-              </label>
-              <label class="transport-option">
-                <input type="radio" name="quoteType" value="quote-ftl" />
-                <span class="transport-symbol">FTL</span>
-                <span class="transport-copy"><strong>FTL</strong><small>Komple araç</small></span>
-                <span class="selection-mark" aria-hidden="true">✓</span>
-              </label>
-              <label class="transport-option">
-                <input type="radio" name="quoteType" value="quote-box" />
-                <span class="transport-symbol">BOX</span>
-                <span class="transport-copy"><strong>Box Truck</strong><small>Kutu kamyon</small></span>
-                <span class="selection-mark" aria-hidden="true">✓</span>
-              </label>
-              <label class="transport-option">
-                <input type="radio" name="quoteType" value="quote-van" />
-                <span class="transport-symbol">VAN</span>
-                <span class="transport-copy"><strong>Cargo Van</strong><small>Hızlı taşıma</small></span>
-                <span class="selection-mark" aria-hidden="true">✓</span>
-              </label>
-            </div>
-          </fieldset>
-
-          <div class="panel-actions panel-actions-end">
-            <button class="primary-button" type="button" data-next="2">Yük Bilgilerine Geç <span aria-hidden="true">→</span></button>
           </div>
         </section>
 
-        <section class="form-panel" data-panel="2" aria-labelledby="cargoTitle" hidden>
-          <div class="panel-heading">
-            <span class="panel-icon" aria-hidden="true">◇</span>
-            <div><h3 id="cargoTitle">Yük bilgilerini girin</h3><p>Doğru teklif için yükünüzü birkaç ayrıntıyla tanımlayın.</p></div>
+        <section class="form-section freight-section" aria-labelledby="freightTitle">
+          <div class="section-heading-inline compact-heading">
+            <h3 id="freightTitle">Freight Type</h3>
           </div>
+          <fieldset class="freight-fieldset">
+            <legend class="sr-only">Choose freight type</legend>
+            <div class="freight-grid">
+              <label class="freight-option">
+                <input type="radio" name="quoteType" value="quote-ltl-market" checked />
+                <span class="freight-code">LTL</span>
+                <span><strong>Less Than Truckload</strong><small>Shared trailer capacity</small></span>
+                <i aria-hidden="true"></i>
+              </label>
+              <label class="freight-option">
+                <input type="radio" name="quoteType" value="quote-ftl" />
+                <span class="freight-code">FTL</span>
+                <span><strong>Full Truckload</strong><small>Dedicated trailer capacity</small></span>
+                <i aria-hidden="true"></i>
+              </label>
+            </div>
+          </fieldset>
+        </section>
 
-          <div class="form-grid form-grid-four">
+        <section id="loadDetails" class="form-section load-section is-active" aria-labelledby="loadTitle">
+          <div class="section-heading-inline compact-heading">
+            <h3 id="loadTitle">Load Details</h3>
+          </div>
+          <div class="load-grid">
             <label class="form-field">
-              <span class="field-title"><i aria-hidden="true">#</i> Palet sayısı</span>
+              <span>Number of Pallets</span>
               <input id="pallets" type="number" min="1" step="1" value="2" required />
-              <span class="validation-message">Palet sayısını girin.</span>
+              <small class="validation-message">Enter at least one pallet.</small>
             </label>
             <label class="form-field">
-              <span class="field-title"><i aria-hidden="true">⚖</i> Palet ağırlığı</span>
-              <span class="unit-input"><input id="weight" type="number" min="1" value="500" required /><b>lb</b></span>
-              <span class="validation-message">Palet ağırlığını girin.</span>
-            </label>
-            <label class="form-field dimension-field">
-              <span class="field-title"><i aria-hidden="true">↔</i> Uzunluk</span>
-              <span class="unit-input"><input id="length" type="number" min="1" value="48" /><b>in</b></span>
-              <span class="validation-message">LTL için uzunluk zorunludur.</span>
-            </label>
-            <label class="form-field dimension-field">
-              <span class="field-title"><i aria-hidden="true">↔</i> Genişlik</span>
-              <span class="unit-input"><input id="width" type="number" min="1" value="40" /><b>in</b></span>
-              <span class="validation-message">LTL için genişlik zorunludur.</span>
-            </label>
-            <label class="form-field dimension-field">
-              <span class="field-title"><i aria-hidden="true">↕</i> Yükseklik</span>
-              <span class="unit-input"><input id="height" type="number" min="1" value="48" /><b>in</b></span>
-              <span class="validation-message">LTL için yükseklik zorunludur.</span>
-            </label>
-            <label class="form-field form-field-wide">
-              <span class="field-title"><i aria-hidden="true">□</i> Ürün / Commodity</span>
-              <input id="commodity" type="text" placeholder="Örn. Auto parts" />
+              <span>Weight per Pallet <b>(lb)</b></span>
+              <input id="weight" type="number" min="1" step="1" value="500" required />
+              <small class="validation-message">Enter the pallet weight.</small>
             </label>
             <label class="form-field">
-              <span class="field-title"><i aria-hidden="true">C</i> Freight Class</span>
+              <span>Length <b>(in)</b></span>
+              <input id="length" type="number" min="1" step="1" value="48" required />
+              <small class="validation-message">Enter the length.</small>
+            </label>
+            <label class="form-field">
+              <span>Width <b>(in)</b></span>
+              <input id="width" type="number" min="1" step="1" value="40" required />
+              <small class="validation-message">Enter the width.</small>
+            </label>
+            <label class="form-field">
+              <span>Height <b>(in)</b></span>
+              <input id="height" type="number" min="1" step="1" value="48" required />
+              <small class="validation-message">Enter the height.</small>
+            </label>
+            <label class="form-field commodity-field">
+              <span>Commodity</span>
+              <input id="commodity" type="text" autocomplete="off" placeholder="e.g. Auto parts" />
+            </label>
+            <label class="form-field">
+              <span>Freight Class</span>
               <select id="freightClass">
-                <option value="">Seçiniz</option>
+                <option value="">Select class</option>
                 <option>50</option><option>55</option><option>60</option><option>65</option><option>70</option><option>77.5</option>
                 <option>85</option><option>92.5</option><option>100</option><option>110</option><option>125</option><option>150</option>
                 <option>175</option><option>200</option><option>250</option><option>300</option><option>400</option><option>500</option>
@@ -173,85 +143,95 @@
             </label>
           </div>
 
-          <label class="toggle-row">
-            <input id="hazmat" type="checkbox" />
-            <span class="toggle-check" aria-hidden="true">✓</span>
-            <span><strong>Tehlikeli madde (Hazmat)</strong><small>Yükünüz tehlikeli madde sınıfındaysa işaretleyin.</small></span>
-          </label>
-
-          <div class="panel-actions panel-actions-split">
-            <button class="secondary-button" type="button" data-back="1"><span aria-hidden="true">←</span> Rotaya Dön</button>
-            <button class="primary-button" type="button" data-next="3">Ek Hizmetlere Geç <span aria-hidden="true">→</span></button>
+          <div class="toggle-grid">
+            <label class="toggle-option">
+              <input id="hazmat" type="checkbox" />
+              <span class="switch" aria-hidden="true"><i></i></span>
+              <span><strong>Hazmat</strong><small>Shipment contains regulated hazardous materials</small></span>
+            </label>
+            <label class="toggle-option">
+              <input id="stackable" type="checkbox" checked />
+              <span class="switch" aria-hidden="true"><i></i></span>
+              <span><strong>Stackable</strong><small>Pallets can be safely stacked</small></span>
+            </label>
           </div>
         </section>
 
-        <section class="form-panel" data-panel="3" aria-labelledby="servicesTitle" hidden>
-          <div class="panel-heading">
-            <span class="panel-icon" aria-hidden="true">+</span>
-            <div><h3 id="servicesTitle">Ek hizmetleri seçin</h3><p>Gönderiniz için gereken pickup ve teslimat desteklerini ekleyin.</p></div>
-          </div>
-
+        <details id="services" class="services-accordion">
+          <summary>
+            <span><strong>Additional Services</strong><small>Liftgate, residential access and appointments</small></span>
+            <span class="summary-chevron" aria-hidden="true">⌄</span>
+          </summary>
           <div class="service-columns">
             <fieldset class="service-group">
-              <legend><span>A</span><strong>Pickup hizmetleri</strong><small>Yükleme noktasında</small></legend>
-              <label><input type="checkbox" name="pickupService" value="liftgate-pickup" /><i>✓</i><span><strong>Liftgate</strong><small>Yükleme rampası desteği</small></span></label>
-              <label><input type="checkbox" name="pickupService" value="residential-pickup" /><i>✓</i><span><strong>Residential</strong><small>Konut adresinden alım</small></span></label>
-              <label><input type="checkbox" name="pickupService" value="inside-pickup" /><i>✓</i><span><strong>Inside Pickup</strong><small>Bina içinden teslim alma</small></span></label>
-              <label><input type="checkbox" name="pickupService" value="limited-access-pickup" /><i>✓</i><span><strong>Limited Access</strong><small>Kısıtlı erişimli lokasyon</small></span></label>
-              <label><input type="checkbox" name="pickupService" value="pickup-appointment" /><i>✓</i><span><strong>Pickup Appointment</strong><small>Randevulu teslim alma</small></span></label>
+              <legend>Pickup requirements</legend>
+              <label><input type="checkbox" name="pickupService" value="liftgate-pickup" /><span>Liftgate Pickup</span></label>
+              <label><input type="checkbox" name="pickupService" value="residential-pickup" /><span>Residential Pickup</span></label>
+              <label><input type="checkbox" name="pickupService" value="inside-pickup" /><span>Inside Pickup</span></label>
+              <label><input type="checkbox" name="pickupService" value="limited-access-pickup" /><span>Limited Access Pickup</span></label>
+              <label><input type="checkbox" name="pickupService" value="pickup-appointment" /><span>Pickup Appointment</span></label>
             </fieldset>
-
             <fieldset class="service-group">
-              <legend><span>B</span><strong>Delivery hizmetleri</strong><small>Teslimat noktasında</small></legend>
-              <label><input type="checkbox" name="deliveryService" value="liftgate-delivery" /><i>✓</i><span><strong>Liftgate</strong><small>İndirme rampası desteği</small></span></label>
-              <label><input type="checkbox" name="deliveryService" value="residential-delivery" /><i>✓</i><span><strong>Residential</strong><small>Konut adresine teslimat</small></span></label>
-              <label><input type="checkbox" name="deliveryService" value="inside-delivery" /><i>✓</i><span><strong>Inside Delivery</strong><small>Bina içine teslimat</small></span></label>
-              <label><input type="checkbox" name="deliveryService" value="limited-access-delivery" /><i>✓</i><span><strong>Limited Access</strong><small>Kısıtlı erişimli lokasyon</small></span></label>
-              <label><input type="checkbox" name="deliveryService" value="delivery-appointment" /><i>✓</i><span><strong>Delivery Appointment</strong><small>Randevulu teslimat</small></span></label>
-              <label><input type="checkbox" name="deliveryService" value="two-man-delivery" /><i>✓</i><span><strong>Two-Man Delivery</strong><small>İki kişilik teslimat ekibi</small></span></label>
+              <legend>Delivery requirements</legend>
+              <label><input type="checkbox" name="deliveryService" value="liftgate-delivery" /><span>Liftgate Delivery</span></label>
+              <label><input type="checkbox" name="deliveryService" value="residential-delivery" /><span>Residential Delivery</span></label>
+              <label><input type="checkbox" name="deliveryService" value="inside-delivery" /><span>Inside Delivery</span></label>
+              <label><input type="checkbox" name="deliveryService" value="limited-access-delivery" /><span>Limited Access Delivery</span></label>
+              <label><input type="checkbox" name="deliveryService" value="delivery-appointment" /><span>Delivery Appointment</span></label>
+              <label><input type="checkbox" name="deliveryService" value="two-man-delivery" /><span>Two-Man Delivery</span></label>
             </fieldset>
           </div>
+        </details>
 
-          <div class="ready-note"><span aria-hidden="true">✓</span><div><strong>Bilgileriniz hazır</strong><small>Teklifler güncel taşıyıcı yanıtlarına göre karşılaştırılacaktır.</small></div></div>
-
-          <div class="panel-actions panel-actions-split">
-            <button class="secondary-button" type="button" data-back="2"><span aria-hidden="true">←</span> Yük Bilgilerine Dön</button>
-            <button id="submitQuote" class="primary-button primary-button-large" type="submit">Teklifleri Karşılaştır <span aria-hidden="true">→</span></button>
-          </div>
-        </section>
+        <div class="submit-row">
+          <p>Secure and transparent freight pricing</p>
+          <button id="submitQuote" class="primary-button" type="submit">Get My Quote</button>
+        </div>
       </form>
     </section>
 
     <section id="resultsSection" class="results-section" aria-live="polite" hidden>
       <div id="quoteResult"></div>
+      <details id="debugPanel" class="debug-panel" hidden>
+        <summary>Developer response</summary>
+        <pre id="debugOutput"></pre>
+      </details>
     </section>
   </main>
 
   <dialog id="quoteDialog" class="quote-dialog" aria-labelledby="dialogTitle">
-    <button class="dialog-close" type="button" aria-label="Teklif özetini kapat">×</button>
-    <span class="dialog-success" aria-hidden="true">✓</span>
-    <span class="section-label">SEÇİLEN TEKLİF</span>
-    <h2 id="dialogTitle">Teklif özetiniz</h2>
+    <button class="dialog-close" type="button" aria-label="Close quote summary">×</button>
+    <span class="dialog-mark" aria-hidden="true">✓</span>
+    <p class="section-kicker">SELECTED QUOTE</p>
+    <h2 id="dialogTitle">Quote summary</h2>
     <div id="selectedQuoteSummary" class="summary-grid"></div>
-    <div class="dialog-contact-copy">
-      <strong>Bu teklif için bizimle iletişime geçin.</strong>
-      <p>Ekibimiz teklif detaylarını doğrulamak ve sonraki adımları planlamak için size yardımcı olacaktır.</p>
+    <div class="dialog-info" role="note">
+      <span class="dialog-info-icon" aria-hidden="true">i</span>
+      <div>
+        <strong>Contact Lodestar Logistics to confirm and finalize this quote.</strong>
+        <div class="dialog-contact-details">
+          <a href="tel:+19082243764"><span>Phone</span><b>(908) 224-3764</b></a>
+          <a href="mailto:info@lodestarllc.com"><span>Email</span><b>info@lodestarllc.com</b></a>
+        </div>
+      </div>
     </div>
     <div class="contact-buttons">
-      <a id="whatsappLink" class="contact-link contact-whatsapp" aria-disabled="true"><span>W</span> WhatsApp</a>
-      <a id="phoneLink" class="contact-link contact-phone" aria-disabled="true"><span>☎</span> Telefon</a>
-      <a id="emailLink" class="contact-link contact-email" aria-disabled="true"><span>@</span> E-posta</a>
+      <a id="phoneLink" class="contact-link contact-call" href="tel:+19082243764">Call Now</a>
+      <a id="emailLink" class="contact-link contact-email" href="mailto:info@lodestarllc.com">Send Email</a>
     </div>
-    <p id="contactNotice" class="contact-notice">İletişim bilgileri tanımlandığında bu kanallar aktif olacaktır.</p>
   </dialog>
 
-  <footer class="app-footer">
+  <footer id="contact" class="app-footer">
     <div class="footer-inner">
+      <a class="wordmark footer-wordmark" href="/" aria-label="Lodestar Freight home">
+        <span class="wordmark-symbol" aria-hidden="true">✦</span>
+        <span class="wordmark-copy"><strong>Lodestar</strong><small>FREIGHT</small></span>
+      </a>
+      <p>Clear freight options. Confident logistics decisions.</p>
       <span>© <span id="year"></span> Lodestar Freight</span>
-      <span>Taşımacılıkta daha net seçenekler, daha güvenli kararlar.</span>
     </div>
   </footer>
 
-  <script src="/static/app.js"></script>
+  <script src="/static/app.js" defer></script>
 </body>
 </html>

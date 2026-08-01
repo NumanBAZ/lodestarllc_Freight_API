@@ -40,7 +40,7 @@ function futureDate(days = 1) {
 }
 
 function selectedAction() {
-  return $('input[name="quoteType"]:checked')?.value || "quote-ltl-market";
+  return $('input[name="quoteType"]:checked')?.value || "";
 }
 
 function checkedServices(name) {
@@ -65,15 +65,36 @@ function validateInput(input) {
   return false;
 }
 
+function clearFreightTypeValidation() {
+  const fieldset = $(".freight-fieldset");
+  fieldset.classList.remove("has-error");
+  fieldset.removeAttribute("aria-invalid");
+}
+
+function validateFreightType() {
+  clearFreightTypeValidation();
+  if (selectedAction()) return true;
+  const fieldset = $(".freight-fieldset");
+  fieldset.classList.add("has-error");
+  fieldset.setAttribute("aria-invalid", "true");
+  return false;
+}
+
 function validateForm() {
-  const requiredInputs = $$("#quoteForm input[required], #quoteForm select[required]");
-  const isValid = requiredInputs.map(validateInput).every(Boolean);
-  if (!isValid) requiredInputs.find((input) => !input.checkValidity())?.focus();
+  const requiredInputs = $$("#quoteForm input[required]:not([name=\"quoteType\"]), #quoteForm select[required]");
+  const inputResults = requiredInputs.map(validateInput);
+  const freightTypeIsValid = validateFreightType();
+  const isValid = inputResults.every(Boolean) && freightTypeIsValid;
+  if (!isValid) {
+    const invalidInput = requiredInputs.find((input) => !input.checkValidity());
+    (invalidInput || $('input[name="quoteType"]'))?.focus();
+  }
   return isValid;
 }
 
 function updateFreightType() {
-  const mode = selectedAction() === "quote-ltl-market" ? "LTL" : "FTL";
+  const action = selectedAction();
+  const mode = action === "quote-ltl-market" ? "LTL" : action === "quote-ftl" ? "FTL" : "";
   $("#loadDetails").classList.add("is-active");
   $("#loadDetails").dataset.mode = mode;
 }
@@ -86,15 +107,16 @@ function buildPayload(action) {
     destination_zip: $("#destinationZip").value.trim(),
     pickup_date: $("#pickupDate").value,
     pallets: numberFrom("#pallets"),
-    weight_lbs_per_pallet: numberFrom("#weight")
+    total_weight_lbs: numberFrom("#totalWeight"),
+    length_in: numberFrom("#length"),
+    width_in: numberFrom("#width"),
+    height_in: numberFrom("#height"),
+    freight_class: $("#freightClass").value
   };
 
   if (action === "quote-ltl-market") {
     return {
       ...base,
-      length_in: numberFrom("#length"),
-      width_in: numberFrom("#width"),
-      height_in: numberFrom("#height"),
       pickup_services: pickup,
       delivery_services: delivery
     };
@@ -104,7 +126,6 @@ function buildPayload(action) {
     ...base,
     accessorials: pickup.length || delivery.length ? { pickup, delivery } : undefined,
     commodity: $("#commodity").value.trim(),
-    freight_class: $("#freightClass").value,
     hazmat: $("#hazmat").checked || undefined,
     stackable: $("#stackable").checked || undefined
   });
@@ -245,6 +266,32 @@ function sortedOptions() {
   return options.sort((a, b) => numericPrice(a) - numericPrice(b));
 }
 
+function competitiveRateEstimate(options) {
+  const validPrices = options.map(numericPrice).filter(Number.isFinite).sort((a, b) => a - b);
+  const validQuoteCount = validPrices.length;
+  if (validQuoteCount === 0) return null;
+  const sampleCount = validQuoteCount <= 2
+    ? validQuoteCount
+    : Math.min(10, Math.max(3, Math.ceil(validQuoteCount / 3)));
+  const selectedPrices = validPrices.slice(0, sampleCount);
+  return {
+    average: selectedPrices.reduce((sum, price) => sum + price, 0) / sampleCount,
+    sampleCount,
+    validQuoteCount
+  };
+}
+
+function rateEstimateMarkup(estimate) {
+  if (!estimate) return "";
+  return `
+    <aside class="rate-estimate" role="note" aria-label="Competitive Rate Estimate">
+      <div><p class="section-kicker">MARKET GUIDANCE</p><h3>Competitive Rate Estimate</h3></div>
+      <strong class="rate-estimate-price">${escapeHtml(formatPrice(estimate.average))}</strong>
+      <p>Calculated from the lowest ${estimate.sampleCount} of ${estimate.validQuoteCount} available carrier quotes.</p>
+      <small>This estimate is not an actual carrier quote and cannot be selected.</small>
+    </aside>`;
+}
+
 function optionTags(option, lowestPrice, shortestTransit) {
   const tags = [];
   if (numericPrice(option) === lowestPrice) tags.push('<span class="offer-tag offer-tag-best">Best Price</span>');
@@ -278,6 +325,7 @@ function renderCarrierCard(option, index, lowestPrice, shortestTransit) {
 
 function renderMarketResults() {
   const options = sortedOptions();
+  const rateEstimate = competitiveRateEstimate(quoteState.marketOptions);
   const prices = quoteState.marketOptions.map(numericPrice).filter(Number.isFinite);
   const transits = quoteState.marketOptions.map(numericTransit).filter(Number.isFinite);
   const lowestPrice = prices.length ? Math.min(...prices) : Number.NEGATIVE_INFINITY;
@@ -294,6 +342,7 @@ function renderMarketResults() {
         </select>
       </label>
     </div>
+    ${rateEstimateMarkup(rateEstimate)}
     <div class="offer-grid">${options.map((option, index) => renderCarrierCard(option, index, lowestPrice, shortestTransit)).join("")}</div>`;
 
   $("#sortOffers").addEventListener("change", (event) => {
@@ -301,7 +350,7 @@ function renderMarketResults() {
     renderMarketResults();
   });
   $$('[data-select-offer]').forEach((button) => button.addEventListener("click", () => {
-    openQuoteDialog(sortedOptions()[Number(button.dataset.selectOffer)], "LTL");
+    openQuoteDialog(sortedOptions()[Number(button.dataset.selectOffer)]);
   }));
 }
 
@@ -341,7 +390,7 @@ function renderNetworkResult(data) {
   const services = includedServices(item);
   const quote = {
     ...item,
-    carrier_name: "Lodestar Freight",
+    carrier_name: "Lodestar Logistics",
     service_level: vehicle,
     price_usd: firstValue(item, ["price_usd", "total_price_usd", "price", "total_price"]),
     transit_days: firstValue(item, ["transit_days", "estimated_transit_days"]),
@@ -357,7 +406,7 @@ function renderNetworkResult(data) {
     </div>
     <article class="network-offer">
       <div class="network-primary">
-        <div class="carrier-heading"><span class="carrier-avatar" aria-hidden="true">LF</span><div><h3>Lodestar Freight</h3><small>${escapeHtml(vehicle)}</small></div></div>
+        <div class="carrier-heading"><span class="carrier-avatar" aria-hidden="true">LL</span><div><h3>Lodestar Logistics</h3><small>${escapeHtml(vehicle)}</small></div></div>
         <div class="offer-price">${escapeHtml(formatPrice(quote.price_usd))}<small>USD</small></div>
         <ul class="service-chips">${services.length ? services.map((service) => `<li>${escapeHtml(service)}</li>`).join("") : "<li>No included services were provided</li>"}</ul>
       </div>
@@ -371,7 +420,7 @@ function renderNetworkResult(data) {
       </div>
       <button id="selectNetwork" class="offer-select" type="button">Select Quote</button>
     </article>`;
-  $("#selectNetwork").addEventListener("click", () => openQuoteDialog(quote, "FTL"));
+  $("#selectNetwork").addEventListener("click", () => openQuoteDialog(quote));
 }
 
 function renderQuoteResult(action, data) {
@@ -394,19 +443,18 @@ function renderQuoteResult(action, data) {
   renderNetworkResult(data);
 }
 
-function summaryMarkup(quote, mode) {
+function summaryMarkup(quote) {
   return `
-    <div><span>Carrier</span><strong>${escapeHtml(quote.carrier_name || "Lodestar Freight")}</strong></div>
-    <div><span>Freight Type</span><strong>${escapeHtml(mode)}</strong></div>
+    <div><span>Carrier</span><strong>${escapeHtml(quote.carrier_name || "Lodestar Logistics")}</strong></div>
     <div><span>Price</span><strong>${escapeHtml(formatPrice(quote.price_usd))} USD</strong></div>
     <div><span>Transit Time</span><strong>${escapeHtml(transitText(quote.transit_days))}</strong></div>
-    <div><span>Service</span><strong>${escapeHtml(quote.service_level || "Not provided")}</strong></div>
+    <div><span>Service Level</span><strong>${escapeHtml(quote.service_level || "Not provided")}</strong></div>
     <div><span>Quote ID</span><strong>${escapeHtml(quote.quote_id || "Not provided")}</strong></div>`;
 }
 
-function openQuoteDialog(quote, mode) {
+function openQuoteDialog(quote) {
   if (!quote) return;
-  $("#selectedQuoteSummary").innerHTML = summaryMarkup(quote, mode);
+  $("#selectedQuoteSummary").innerHTML = summaryMarkup(quote);
   const dialog = $("#quoteDialog");
   if (typeof dialog.showModal === "function") dialog.showModal();
   else dialog.setAttribute("open", "");
@@ -431,12 +479,16 @@ $("#quoteForm").addEventListener("input", (event) => {
   if (event.target.matches("input, select")) clearValidation(event.target);
 });
 
-$$('input[name="quoteType"]').forEach((input) => input.addEventListener("change", updateFreightType));
+$$('input[name="quoteType"]').forEach((input) => input.addEventListener("change", () => {
+  clearFreightTypeValidation();
+  updateFreightType();
+}));
 
 $("#quoteForm").addEventListener("submit", async (event) => {
   event.preventDefault();
   if (!validateForm()) return;
   const action = selectedAction();
+  if (!action) return;
   const button = $("#submitQuote");
   button.disabled = true;
   button.innerHTML = "Finding Current Rates <span aria-hidden=\"true\">…</span>";

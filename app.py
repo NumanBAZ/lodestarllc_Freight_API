@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import math
 import os
+from datetime import date
 from typing import Any
 
 import httpx
@@ -90,6 +92,64 @@ def market_price(option: Any) -> float:
         return float("inf")
 
 
+def normalize_quote_body(body: dict[str, Any]) -> dict[str, Any]:
+    """Validate customer quote fields and derive WARP's per-pallet weight."""
+    errors: list[str] = []
+
+    origin_zip = str(body.get("origin_zip") or "").strip()
+    destination_zip = str(body.get("destination_zip") or "").strip()
+    if len(origin_zip) != 5 or not origin_zip.isdigit():
+        errors.append("Origin ZIP must be a valid 5-digit ZIP code.")
+    if len(destination_zip) != 5 or not destination_zip.isdigit():
+        errors.append("Destination ZIP must be a valid 5-digit ZIP code.")
+
+    pickup_date = str(body.get("pickup_date") or "").strip()
+    try:
+        date.fromisoformat(pickup_date)
+    except ValueError:
+        errors.append("Pickup Date must be a valid date.")
+
+    pallets = body.get("pallets")
+    pallets_invalid = (
+        isinstance(pallets, bool)
+        or not isinstance(pallets, (int, float))
+        or pallets <= 0
+        or not float(pallets).is_integer()
+    )
+    if pallets_invalid:
+        errors.append("Number of Pallets must be a whole number greater than zero.")
+
+    positive_fields = {
+        "total_weight_lbs": "Total Weight",
+        "length_in": "Length",
+        "width_in": "Width",
+        "height_in": "Height",
+    }
+    for field, label in positive_fields.items():
+        value = body.get(field)
+        value_invalid = (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(float(value))
+            or value <= 0
+        )
+        if value_invalid:
+            errors.append(f"{label} must be greater than zero.")
+
+    if not str(body.get("freight_class") or "").strip():
+        errors.append("Freight Class is required.")
+
+    if errors:
+        raise HTTPException(status_code=400, detail=errors)
+
+    normalized = dict(body)
+    normalized["pallets"] = int(pallets)
+    normalized["weight_lbs_per_pallet"] = math.ceil(
+        float(normalized.pop("total_weight_lbs")) / normalized["pallets"]
+    )
+    return normalized
+
+
 @app.get("/api/health")
 async def health() -> dict[str, Any]:
     return {"ok": True}
@@ -120,21 +180,14 @@ async def call_warp(
     body.pop("_environment", None)
     key = api_key_for_configured_environment()
 
-    if action == "quote-ltl-market":
-        required_fields = LTL_MARKET_FIELDS[:8]
-        missing_fields = [
-            field for field in required_fields if body.get(field) in (None, "")
-        ]
-        if missing_fields:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Missing LTL market fields: {', '.join(missing_fields)}",
-            )
+    if action in {"quote-ltl-market", "quote-ftl"}:
+        body = normalize_quote_body(body)
 
+    if action == "quote-ltl-market":
         # Only the documented market-options fields are sent to WARP. Service
         # arrays remain present even when the user has not selected a service.
         body = {
-            **{field: body.get(field) for field in required_fields},
+            **{field: body.get(field) for field in LTL_MARKET_FIELDS[:8]},
             "pickup_services": body.get("pickup_services") or [],
             "delivery_services": body.get("delivery_services") or [],
         }

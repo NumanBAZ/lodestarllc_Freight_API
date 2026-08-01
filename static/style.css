@@ -109,6 +109,7 @@ main { padding: 20px 0 64px; }
 .form-field { min-width: 0; display: grid; align-content: start; gap: 5px; }
 .form-field > span { color: #d9dce2; font-size: 14px; font-weight: 700; }
 .form-field > span b { color: var(--muted); font-size: 13px; font-weight: 600; }
+.required-mark { color: #ff5d72; font-style: normal; font-weight: 850; }
 .form-field input, .form-field select {
   width: 100%;
   height: 52px;
@@ -130,6 +131,9 @@ main { padding: 20px 0 64px; }
 .form-field.has-error .validation-message { display: block; }
 
 .freight-fieldset { min-width: 0; margin: 0; padding: 0; border: 0; }
+.freight-fieldset.has-error .freight-option { border-color: var(--red); }
+.freight-fieldset.has-error .validation-message { display: block; }
+.freight-validation-message { margin-top: 8px; }
 .freight-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .freight-option { position: relative; min-height: 70px; display: grid; grid-template-columns: 52px minmax(0,1fr) 24px; align-items: center; gap: 12px; padding: 9px 13px; border: 1px solid var(--line-strong); border-radius: 9px; background: rgba(11,13,18,.38); cursor: pointer; transition: border-color .18s ease, background .18s ease; }
 .freight-option:hover { border-color: rgba(244,184,0,.55); }
@@ -199,8 +203,13 @@ main { padding: 20px 0 64px; }
 .results-toolbar p { margin: 0; color: var(--muted); }
 .sort-box { display: grid; gap: 5px; color: var(--muted); font-size: 12px; font-weight: 800; letter-spacing: .08em; }
 .sort-select { min-width: 185px; height: 46px; padding: 0 12px; border: 1px solid var(--line-strong); border-radius: 7px; background: var(--card-alt); color: var(--white); font-size: 14px; }
+.rate-estimate { display: grid; grid-template-columns: minmax(210px, 1fr) auto minmax(280px, 1.4fr); align-items: center; gap: 18px; margin: 0 0 18px; padding: 17px 20px; border: 1px solid rgba(96,165,250,.32); border-radius: 10px; background: rgba(37,99,235,.08); }
+.rate-estimate h3 { margin: 2px 0 0; font-size: 19px; }
+.rate-estimate-price { color: var(--white); font-size: 26px; letter-spacing: -.03em; }
+.rate-estimate p { margin: 0; color: #d5dae3; font-size: 13px; }
+.rate-estimate small { grid-column: 3; margin-top: -12px; color: var(--muted); font-size: 12px; }
 .offer-grid { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 14px; }
-.offer-card { position: relative; min-height: 394px; display: flex; flex-direction: column; padding: 20px; border: 1px solid var(--line); border-radius: 12px; background: linear-gradient(145deg, var(--card-alt), var(--card)); box-shadow: 0 14px 35px rgba(0,0,0,.18); }
+.offer-card { position: relative; min-width: 0; min-height: 394px; display: flex; flex-direction: column; padding: 20px; border: 1px solid var(--line); border-radius: 12px; background: linear-gradient(145deg, var(--card-alt), var(--card)); box-shadow: 0 14px 35px rgba(0,0,0,.18); }
 .offer-card.is-best { border-color: var(--yellow); box-shadow: 0 0 0 1px rgba(244,184,0,.16), 0 18px 45px rgba(0,0,0,.28); }
 .offer-tags { min-height: 26px; display: flex; gap: 7px; }
 .offer-tag { width: max-content; padding: 4px 8px; border-radius: 4px; font-size: 11px; font-weight: 850; letter-spacing: .05em; text-transform: uppercase; }
@@ -210,8 +219,8 @@ main { padding: 20px 0 64px; }
 .carrier-heading { display: flex; align-items: center; gap: 12px; margin-top: 13px; }
 .carrier-avatar { width: 46px; height: 46px; flex: 0 0 46px; display: grid; place-items: center; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--navy); color: var(--yellow); font-size: 13px; font-weight: 900; }
 .carrier-heading > div { min-width: 0; }
-.carrier-heading h3 { margin: 0; overflow: hidden; color: var(--white); font-size: 19px; text-overflow: ellipsis; white-space: nowrap; }
-.carrier-heading small { display: block; margin-top: 2px; overflow: hidden; color: var(--muted); font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+.carrier-heading h3 { margin: 0; color: var(--white); font-size: 19px; overflow-wrap: anywhere; }
+.carrier-heading small { display: block; margin-top: 2px; color: var(--muted); font-size: 13px; overflow-wrap: anywhere; }
 .offer-price { margin: 22px 0 16px; color: var(--white); font-size: 31px; font-weight: 850; line-height: 1; letter-spacing: -.035em; }
 .offer-price small { margin-left: 6px; color: var(--muted); font-size: 12px; letter-spacing: .06em; }
 .offer-metrics { display: grid; gap: 9px; margin: 0; }
@@ -221,7 +230,7 @@ main { padding: 20px 0 64px; }
 .status-ready { color: #54d99f; }
 .status-info { color: #efc863; }
 .quote-reference { display: grid; grid-template-columns: 1fr auto; gap: 8px; margin: 14px 0; padding-top: 12px; border-top: 1px solid var(--line); color: var(--muted); font-size: 12px; }
-.quote-reference code { max-width: 135px; overflow: hidden; color: #dfe2e8; text-overflow: ellipsis; white-space: nowrap; }
+.quote-reference code { min-width: 0; max-width: 135px; color: #dfe2e8; overflow-wrap: anywhere; white-space: normal; }
 .offer-select { width: 100%; margin-top: auto; }
 
 .network-offer { display: grid; grid-template-columns: minmax(250px,.7fr) 1.5fr auto; align-items: center; gap: 26px; padding: 24px; border: 1px solid var(--yellow); border-radius: 12px; background: linear-gradient(145deg, var(--card-alt), var(--card)); }
@@ -283,6 +292,8 @@ main { padding: 20px 0 64px; }
 .footer-wordmark .wordmark-symbol { width: 34px; height: 34px; }
 
 @media (max-width: 1080px) {
+  .rate-estimate { grid-template-columns: 1fr auto; }
+  .rate-estimate p, .rate-estimate small { grid-column: 1 / -1; margin-top: 0; }
   .header-nav { display: none; }
   .header-inner { grid-template-columns: 1fr auto; }
   .form-section { grid-template-columns: 165px minmax(0,1fr); }
@@ -311,7 +322,7 @@ main { padding: 20px 0 64px; }
   .primary-button { width: 100%; }
   .results-toolbar { align-items: stretch; flex-direction: column; }
   .sort-select { width: 100%; }
-  .offer-grid { grid-template-columns: 1fr; }
+  .offer-grid { grid-template-columns: minmax(0, 1fr); }
   .network-metrics { grid-template-columns: 1fr 1fr; }
   .contact-buttons { grid-template-columns: 1fr; }
   .dialog-contact-details { grid-template-columns: 1fr; }

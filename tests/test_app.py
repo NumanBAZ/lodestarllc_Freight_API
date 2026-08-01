@@ -82,10 +82,11 @@ class FreightQuoteTests(unittest.TestCase):
             "destination_zip": "94105",
             "pickup_date": "2026-07-27",
             "pallets": 2,
-            "weight_lbs_per_pallet": 500,
+            "total_weight_lbs": 1001,
             "length_in": 48,
             "width_in": 40,
             "height_in": 48,
+            "freight_class": "70",
             "pickup_services": [],
             "delivery_services": ["liftgate-delivery"],
             "must_not_be_forwarded": "ignored",
@@ -106,6 +107,8 @@ class FreightQuoteTests(unittest.TestCase):
         )
         self.assertEqual(set(FakeAsyncClient.last_json or {}), set(app_module.LTL_MARKET_FIELDS))
         self.assertEqual((FakeAsyncClient.last_json or {})["pickup_services"], [])
+        self.assertEqual((FakeAsyncClient.last_json or {})["weight_lbs_per_pallet"], 501)
+        self.assertNotIn("total_weight_lbs", FakeAsyncClient.last_json or {})
         self.assertEqual(FakeAsyncClient.last_timeout.read, 60.0)
         self.assertEqual(
             (FakeAsyncClient.last_headers or {}).get("Authorization"),
@@ -140,6 +143,41 @@ class FreightQuoteTests(unittest.TestCase):
         response = self.client.post("/api/warp/quote-ltl-market", json={})
         self.assertEqual(response.status_code, 400)
 
+    def test_each_required_quote_field_is_validated_by_the_backend(self) -> None:
+        for field in (
+            "origin_zip",
+            "destination_zip",
+            "pickup_date",
+            "pallets",
+            "total_weight_lbs",
+            "length_in",
+            "width_in",
+            "height_in",
+            "freight_class",
+        ):
+            with self.subTest(field=field):
+                payload = {**self.payload, field: ""}
+                response = self.client.post("/api/warp/quote-ltl-market", json=payload)
+                self.assertEqual(response.status_code, 400)
+
+    def test_zero_pallets_are_rejected_before_warp_is_called(self) -> None:
+        FakeAsyncClient.last_url = None
+        payload = {**self.payload, "pallets": 0}
+        with patch.object(app_module.httpx, "AsyncClient", FakeAsyncClient):
+            response = self.client.post("/api/warp/quote-ltl-market", json=payload)
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIsNone(FakeAsyncClient.last_url)
+
+    def test_ftl_route_is_preserved_and_uses_derived_weight(self) -> None:
+        with patch.object(app_module.httpx, "AsyncClient", FakeAsyncClient):
+            response = self.client.post("/api/warp/quote-ftl", json=self.payload)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(FakeAsyncClient.last_url, "https://www.wearewarp.com/api/v1/ftl/quote")
+        self.assertEqual((FakeAsyncClient.last_json or {})["weight_lbs_per_pallet"], 501)
+        self.assertNotIn("total_weight_lbs", FakeAsyncClient.last_json or {})
+
     def test_booking_and_payment_actions_are_not_exposed(self) -> None:
         for action in ("book", "rebook", "bookings", "payment", "checkout"):
             with self.subTest(action=action):
@@ -156,7 +194,7 @@ class FreightQuoteTests(unittest.TestCase):
         self.assertEqual(app_module.ALLOWED_ACTIONS["quote-van"][1], "/van/quote")
 
         javascript = Path("static/app.js").read_text(encoding="utf-8")
-        self.assertIn('carrier_name: "Lodestar Freight"', javascript)
+        self.assertIn('carrier_name: "Lodestar Logistics"', javascript)
         self.assertIn('safeCustomerNote(data?.note)', javascript)
 
     def test_health_does_not_disclose_configuration(self) -> None:
@@ -191,11 +229,11 @@ class FreightQuoteTests(unittest.TestCase):
     def test_required_customer_controls_and_services_are_present(self) -> None:
         html = Path("static/index.html").read_text(encoding="utf-8")
         for expected in (
-            "Origin ZIP Code",
-            "Destination ZIP Code",
+            "Origin ZIP",
+            "Destination ZIP",
             "Pickup Date",
             "Number of Pallets",
-            "Weight per Pallet",
+            "Total Weight",
             "Commodity",
             "Freight Class",
             "Hazmat",
@@ -205,8 +243,57 @@ class FreightQuoteTests(unittest.TestCase):
             "Liftgate Pickup",
             "Residential Delivery",
             "Two-Man Delivery",
+            'value="driver-assist-pickup"',
+            'value="driver-assist-delivery"',
         ):
             self.assertIn(expected, html)
+        self.assertIn("Commodity <b>Optional</b>", html)
+        self.assertNotIn("Weight per Pallet", html)
+        self.assertGreaterEqual(html.count('class="required-mark"'), 9)
+
+    def test_freight_type_requires_an_explicit_selection(self) -> None:
+        html = Path("static/index.html").read_text(encoding="utf-8")
+        javascript = Path("static/app.js").read_text(encoding="utf-8")
+        for value in ("quote-ltl-market", "quote-ftl"):
+            self.assertIn(f'name="quoteType" value="{value}" required', html)
+        self.assertNotIn('value="quote-ltl-market" required checked', html)
+        self.assertIn("Select LTL or FTL before requesting a quote.", html)
+        self.assertIn("function validateFreightType()", javascript)
+        self.assertIn('return $(\'input[name="quoteType"]:checked\')?.value || "";', javascript)
+        self.assertNotIn('?.value || "quote-ltl-market"', javascript)
+
+    def test_mobile_offer_cards_can_shrink_and_wrap_long_text(self) -> None:
+        css = Path("static/style.css").read_text(encoding="utf-8")
+        self.assertIn(".offer-card { position: relative; min-width: 0;", css)
+        self.assertIn(".offer-grid { grid-template-columns: minmax(0, 1fr); }", css)
+        self.assertIn(".carrier-heading h3", css)
+        self.assertIn("overflow-wrap: anywhere", css)
+        self.assertIn("white-space: normal", css)
+
+    def test_competitive_rate_estimate_uses_lowest_dynamic_sample(self) -> None:
+        javascript = Path("static/app.js").read_text(encoding="utf-8")
+        self.assertIn("Competitive Rate Estimate", javascript)
+        self.assertIn("Math.min(10, Math.max(3, Math.ceil(validQuoteCount / 3)))", javascript)
+        self.assertIn("validPrices.slice(0, sampleCount)", javascript)
+        self.assertIn("Calculated from the lowest ${estimate.sampleCount} of ${estimate.validQuoteCount}", javascript)
+        self.assertIn("not an actual carrier quote and cannot be selected", javascript)
+
+    def test_selected_quote_modal_contains_only_requested_summary_fields(self) -> None:
+        javascript = Path("static/app.js").read_text(encoding="utf-8")
+        start = javascript.index("function summaryMarkup")
+        end = javascript.index("function openQuoteDialog", start)
+        summary = javascript[start:end]
+        for label in ("Carrier", "Price", "Transit Time", "Service Level", "Quote ID"):
+            self.assertIn(f"<span>{label}</span>", summary)
+        self.assertNotIn("Freight Type", summary)
+
+    def test_customer_copy_uses_lodestar_logistics(self) -> None:
+        customer_copy = "".join(
+            Path(path).read_text(encoding="utf-8")
+            for path in ("static/index.html", "static/app.js")
+        )
+        self.assertNotIn("Lodestar Freight", customer_copy)
+        self.assertIn("Lodestar Logistics", customer_copy)
 
     def test_quote_form_uses_simplified_premium_layout(self) -> None:
         html = Path("static/index.html").read_text(encoding="utf-8")

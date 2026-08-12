@@ -73,8 +73,57 @@ class FakeAsyncClient:
         return FakeWarpResponse()
 
 
+class FakeBookingResponse:
+    is_success = True
+    status_code = 200
+    headers: dict[str, str] = {}
+
+    def json(self) -> dict[str, Any]:
+        return {
+            "booked": True,
+            "shipment_id": "sandbox-shipment-123",
+            "shipment_number": "S-SANDBOX-123",
+            "tracking_number": "TRACK-SANDBOX-123",
+            "tracking_dashboard": "https://example.invalid/sandbox-tracking",
+            "sandbox": True,
+            "charged": 0,
+        }
+
+
+class FakeBookingClient(FakeAsyncClient):
+    call_count = 0
+
+    async def post(
+        self,
+        url: str,
+        *,
+        headers: dict[str, str],
+        json: dict[str, Any],
+    ) -> FakeBookingResponse:
+        type(self).last_url = url
+        type(self).last_json = json
+        type(self).last_headers = headers
+        type(self).call_count += 1
+        return FakeBookingResponse()
+
+
 class FreightQuoteTests(unittest.TestCase):
     def setUp(self) -> None:
+        self.environment = patch.dict(
+            os.environ,
+            {
+                "STAFF_USERNAME": "staff-user",
+                "STAFF_PASSWORD": "correct-horse-battery-staple",
+                "STAFF_SESSION_SECRET": "test-session-secret-that-is-longer-than-32-characters",
+                "STAFF_COOKIE_SECURE": "false",
+                "STAFF_BOOKING_ENABLED": "false",
+            },
+        )
+        self.environment.start()
+        self.addCleanup(self.environment.stop)
+        app_module.BOOKING_RESULTS.clear()
+        app_module.BOOKINGS_IN_PROGRESS.clear()
+        FakeBookingClient.call_count = 0
         self.client = TestClient(app_module.app)
         self.payload = {
             "_environment": "live",
@@ -90,6 +139,46 @@ class FreightQuoteTests(unittest.TestCase):
             "pickup_services": [],
             "delivery_services": ["liftgate-delivery"],
             "must_not_be_forwarded": "ignored",
+        }
+
+    def login_staff(self) -> str:
+        response = self.client.post(
+            "/api/staff/login",
+            json={
+                "username": "staff-user",
+                "password": "correct-horse-battery-staple",
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        return response.json()["csrf_token"]
+
+    def booking_details(self, quote_token: str) -> dict[str, Any]:
+        return {
+            "quote_token": quote_token,
+            "reference": "PO-12345",
+            "pickup": {
+                "company": "Shipper Co",
+                "street": "123 Dock Street",
+                "city": "Los Angeles",
+                "state": "ca",
+                "zipCode": "90012",
+                "contactName": "Jane Shipper",
+                "phone": "2135550100",
+                "email": "shipper@example.com",
+            },
+            "delivery": {
+                "company": "Receiver Co",
+                "street": "500 Market Street",
+                "city": "San Francisco",
+                "state": "CA",
+                "zipCode": "94105",
+                "contactName": "Sam Receiver",
+                "phone": "4155550100",
+                "email": "receiver@example.com",
+            },
+            "pickup_window": {"from": "08:00", "to": "12:00"},
+            "delivery_window": {"from": "13:00", "to": "17:00"},
+            "notes": "Call the dock before arrival.",
         }
 
     def test_ltl_market_request_is_filtered_timed_and_sorted(self) -> None:
@@ -187,6 +276,236 @@ class FreightQuoteTests(unittest.TestCase):
         exposed_actions = " ".join(app_module.ALLOWED_ACTIONS)
         self.assertNotIn("book", exposed_actions)
         self.assertNotIn("payment", exposed_actions)
+
+    def test_staff_api_requires_backend_auth_and_csrf(self) -> None:
+        for path in ("/api/staff/session", "/api/staff/quote/ltl", "/api/staff/book"):
+            with self.subTest(path=path):
+                response = self.client.get(path) if path.endswith("session") else self.client.post(path, json={})
+                self.assertEqual(response.status_code, 401)
+
+        csrf = self.login_staff()
+        response = self.client.post("/api/staff/quote/ltl", json=self.payload)
+        self.assertEqual(response.status_code, 403)
+        self.assertTrue(csrf)
+
+    def test_staff_login_cookie_session_and_logout(self) -> None:
+        invalid = self.client.post(
+            "/api/staff/login",
+            json={"username": "staff-user", "password": "wrong-password"},
+        )
+        self.assertEqual(invalid.status_code, 401)
+
+        login = self.client.post(
+            "/api/staff/login",
+            json={"username": "staff-user", "password": "correct-horse-battery-staple"},
+        )
+        self.assertEqual(login.status_code, 200)
+        self.assertFalse(login.json()["booking_enabled"])
+        csrf = login.json()["csrf_token"]
+        cookie = self.client.cookies.get(app_module.STAFF_COOKIE_NAME)
+        self.assertTrue(cookie)
+        set_cookie = login.headers["set-cookie"].lower()
+        self.assertIn("httponly", set_cookie)
+        self.assertIn("samesite=strict", set_cookie)
+
+        session = self.client.get("/api/staff/session")
+        self.assertEqual(session.status_code, 200)
+        self.assertFalse(session.json()["booking_enabled"])
+        logout = self.client.post("/api/staff/logout", headers={"X-Staff-CSRF": csrf})
+        self.assertEqual(logout.status_code, 200)
+        self.assertEqual(self.client.get("/api/staff/session").status_code, 401)
+
+    def test_staff_cookie_is_secure_behind_https_proxy(self) -> None:
+        with patch.dict(os.environ, {"STAFF_COOKIE_SECURE": ""}):
+            response = self.client.post(
+                "/api/staff/login",
+                json={"username": "staff-user", "password": "correct-horse-battery-staple"},
+                headers={"x-forwarded-proto": "https"},
+            )
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("secure", response.headers["set-cookie"].lower())
+
+        with patch.dict(os.environ, {"STAFF_COOKIE_SECURE": "true"}):
+            explicitly_secure = self.client.post(
+                "/api/staff/login",
+                json={"username": "staff-user", "password": "correct-horse-battery-staple"},
+            )
+        cookie = explicitly_secure.headers["set-cookie"].lower()
+        self.assertIn("secure", cookie)
+        self.assertIn("httponly", cookie)
+        self.assertIn("samesite=strict", cookie)
+
+    def test_staff_ltl_quote_preserves_booking_fields_and_disables_unbookable(self) -> None:
+        csrf = self.login_staff()
+        with (
+            patch.object(app_module.httpx, "AsyncClient", FakeAsyncClient),
+            patch.object(app_module, "WARP_ENV", "sandbox"),
+            patch.dict(os.environ, {"WARP_SANDBOX_KEY": "wak_test_backend_only"}),
+        ):
+            response = self.client.post(
+                "/api/staff/quote/ltl",
+                json=self.payload,
+                headers={"X-Staff-CSRF": csrf},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        options = response.json()["options"]
+        self.assertEqual([option["carrier_name"] for option in options], ["Carrier A", "Carrier B", "Carrier C"])
+        self.assertEqual(options[0]["quote_id"], "quote-a")
+        self.assertEqual(options[0]["option_id"], "option-a")
+        self.assertFalse(options[0]["bookable"])
+        self.assertNotIn("quote_token", options[0])
+        self.assertTrue(options[1]["bookable"])
+        self.assertTrue(options[1]["quote_token"])
+        self.assertEqual(FakeAsyncClient.last_url, "https://www.wearewarp.com/api/v1/ltl/market-options")
+        self.assertEqual((FakeAsyncClient.last_headers or {}).get("Authorization"), "Bearer wak_test_backend_only")
+
+    def test_staff_quote_modes_use_the_documented_warp_endpoints(self) -> None:
+        csrf = self.login_staff()
+        for mode, path in app_module.STAFF_QUOTE_PATHS.items():
+            with self.subTest(mode=mode), patch.object(app_module.httpx, "AsyncClient", FakeAsyncClient):
+                response = self.client.post(
+                    f"/api/staff/quote/{mode}",
+                    json=self.payload,
+                    headers={"X-Staff-CSRF": csrf},
+                )
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(FakeAsyncClient.last_url, f"https://www.wearewarp.com/api/v1{path}")
+
+    def test_public_user_cannot_reach_booking_and_staff_page_has_no_secrets(self) -> None:
+        self.client.cookies.clear()
+        self.assertEqual(self.client.post("/api/warp/book", json={}).status_code, 404)
+        self.assertEqual(self.client.post("/api/staff/book", json={}).status_code, 401)
+        public_javascript = Path("static/app.js").read_text(encoding="utf-8")
+        staff_bundle = "".join(
+            Path(path).read_text(encoding="utf-8")
+            for path in ("static/staff.html", "static/staff.js")
+        )
+        self.assertNotIn("/book", public_javascript)
+        for forbidden in (
+            "correct-horse",
+            "wak_test_",
+            "wak_live_",
+            "STAFF_USERNAME",
+            "STAFF_PASSWORD",
+            "STAFF_SESSION_SECRET",
+        ):
+            self.assertNotIn(forbidden, staff_bundle)
+
+    def test_staff_frontend_requires_second_confirmation_and_hides_unbookable_actions(self) -> None:
+        html = Path("static/staff.html").read_text(encoding="utf-8")
+        javascript = Path("static/staff.js").read_text(encoding="utf-8")
+        for mode in ("ltl", "ftl", "box-truck", "van"):
+            self.assertIn(f'value="{mode}"', html)
+        self.assertIn("Book Shipment", javascript)
+        self.assertIn("Confirm Booking", html)
+        self.assertIn("SECOND CONFIRMATION", html)
+        self.assertIn("if (!quote.bookable || !quote.quote_token) return", javascript)
+        self.assertIn("disabled>Not Bookable", javascript)
+        self.assertIn('fetch("/api/staff/book"', javascript)
+        self.assertIn("staffState.bookingPending", javascript)
+        self.assertIn("Production booking is currently disabled.", html)
+        self.assertIn("if (!staffState.bookingEnabled)", javascript)
+        self.assertIn('headers: { "Content-Type": "application/json", "X-Staff-CSRF"', javascript)
+
+    def test_booking_is_disabled_by_default_on_frontend_and_backend(self) -> None:
+        csrf = self.login_staff()
+        FakeBookingClient.call_count = 0
+        FakeBookingClient.last_url = None
+        with patch.object(app_module.httpx, "AsyncClient", FakeBookingClient):
+            response = self.client.post(
+                "/api/staff/book",
+                json={"quote_token": "not-needed-while-disabled"},
+                headers={"X-Staff-CSRF": csrf},
+            )
+
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.json()["detail"], "Production booking is currently disabled.")
+        self.assertEqual(FakeBookingClient.call_count, 0)
+        self.assertIsNone(FakeBookingClient.last_url)
+
+    def test_sandbox_booking_uses_documented_body_and_is_idempotent(self) -> None:
+        csrf = self.login_staff()
+        with (
+            patch.object(app_module.httpx, "AsyncClient", FakeAsyncClient),
+            patch.object(app_module, "WARP_ENV", "sandbox"),
+            patch.dict(
+                os.environ,
+                {
+                    "WARP_SANDBOX_KEY": "wak_test_backend_only",
+                    "STAFF_BOOKING_ENABLED": "true",
+                },
+            ),
+        ):
+            quote_response = self.client.post(
+                "/api/staff/quote/ltl",
+                json=self.payload,
+                headers={"X-Staff-CSRF": csrf},
+            )
+        quote_token_value = quote_response.json()["options"][1]["quote_token"]
+
+        with (
+            patch.object(app_module.httpx, "AsyncClient", FakeBookingClient),
+            patch.object(app_module, "WARP_ENV", "sandbox"),
+            patch.dict(
+                os.environ,
+                {
+                    "WARP_SANDBOX_KEY": "wak_test_backend_only",
+                    "STAFF_BOOKING_ENABLED": "true",
+                },
+            ),
+        ):
+            first = self.client.post(
+                "/api/staff/book",
+                json=self.booking_details(quote_token_value),
+                headers={"X-Staff-CSRF": csrf},
+            )
+            second = self.client.post(
+                "/api/staff/book",
+                json=self.booking_details(quote_token_value),
+                headers={"X-Staff-CSRF": csrf},
+            )
+
+        self.assertEqual(first.status_code, 200)
+        self.assertTrue(first.json()["ok"])
+        self.assertEqual(first.json()["shipment_id"], "sandbox-shipment-123")
+        self.assertEqual(first.json()["carrier"], "Carrier B")
+        self.assertEqual(first.json()["booked_price"], "425.80")
+        self.assertTrue(second.json()["idempotent_replay"])
+        self.assertEqual(FakeBookingClient.call_count, 1)
+        self.assertEqual(FakeBookingClient.last_url, "https://www.wearewarp.com/api/v1/book")
+        self.assertEqual((FakeBookingClient.last_headers or {}).get("Authorization"), "Bearer wak_test_backend_only")
+        sent = FakeBookingClient.last_json or {}
+        self.assertEqual(sent["quote_id"], "quote-b")
+        self.assertEqual(sent["reference"], "PO-12345")
+        self.assertEqual(sent["patch"]["pickup"]["state"], "CA")
+        self.assertEqual(sent["pickup_window"], {"from": "08:00", "to": "12:00"})
+        self.assertNotIn("quote_token", sent)
+
+    def test_tampered_quote_token_is_rejected_before_warp(self) -> None:
+        csrf = self.login_staff()
+        token = app_module.quote_token(
+            {"username": "staff-user"},
+            {
+                "quote_id": "sandbox-quote",
+                "carrier_name": "Sandbox Carrier",
+                "price_usd": 100,
+                "bookable": True,
+            },
+            "ltl",
+            self.payload,
+        )
+        encoded, signature = token.split(".", 1)
+        tampered_signature = ("A" if signature[0] != "A" else "B") + signature[1:]
+        FakeBookingClient.last_url = None
+        with patch.dict(os.environ, {"STAFF_BOOKING_ENABLED": "true"}):
+            response = self.client.post(
+                "/api/staff/book",
+                json=self.booking_details(f"{encoded}.{tampered_signature}"),
+                headers={"X-Staff-CSRF": csrf},
+            )
+        self.assertEqual(response.status_code, 401)
+        self.assertIsNone(FakeBookingClient.last_url)
 
     def test_non_ltl_quote_routes_are_preserved(self) -> None:
         self.assertEqual(app_module.ALLOWED_ACTIONS["quote-ftl"][1], "/ftl/quote")

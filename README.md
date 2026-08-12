@@ -56,3 +56,38 @@ Ardından `http://127.0.0.1:8000` adresini açın.
 ```
 
 API anahtarları HTML veya JavaScript içine yazılmaz ve hiçbir backend yanıtında döndürülmez. Ortam seçimi tarayıcıdan yapılamaz; yalnızca `.env` içindeki `WARP_ENV` değeri belirleyicidir.
+
+## Staff Booking Panel
+
+`/staff` paneli ayrı backend kimlik doğrulaması kullanır. Aşağıdaki değerleri
+yalnızca `.env` veya deployment secret ayarlarında tanımlayın:
+
+```dotenv
+STAFF_USERNAME=lodestar-staff
+STAFF_PASSWORD=...
+STAFF_SESSION_SECRET=... # en az 32 rastgele karakter
+STAFF_COOKIE_SECURE=true # production
+```
+
+Production booking gerçek mali işlem oluşturabilir. Geliştirme ve otomatik
+testlerde `WARP_ENV=sandbox` ile `wak_test_*` anahtarı kullanın. Public
+`/api/warp/*` allowlist'i booking işlemi sunmaz; `/api/staff/book` imzalı staff
+session ve CSRF doğrulaması gerektirir.
+
+### Vercel production variables
+
+Vercel project settings under **Environment Variables** must define these names
+for the Production environment. Store real values only in Vercel; do not commit
+them to the repository:
+
+```text
+STAFF_USERNAME
+STAFF_PASSWORD
+STAFF_SESSION_SECRET
+STAFF_COOKIE_SECURE
+STAFF_BOOKING_ENABLED
+```
+
+Set `STAFF_COOKIE_SECURE=true`. Keep `STAFF_BOOKING_ENABLED=false` until live
+booking is intentionally approved. When disabled, staff can quote and review a
+bookable offer, but both the confirmation UI and backend prevent `POST /book`.

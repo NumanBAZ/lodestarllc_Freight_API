@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="robots" content="noindex, nofollow" />
+  <title>Lodestar Logistics | Staff Booking</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/staff.css" />
+</head>
+<body>
+  <header class="staff-header">
+    <a class="staff-brand" href="/" aria-label="Lodestar Logistics home">
+      <span class="brand-mark">LL</span>
+      <span>Lodestar Logistics<small>Staff Booking</small></span>
+    </a>
+    <div id="staffIdentity" class="staff-identity" hidden>
+      <span id="staffUsername"></span>
+      <button id="logoutButton" class="button button-quiet" type="button">Logout</button>
+    </div>
+  </header>
+
+  <main>
+    <section id="loginView" class="login-shell">
+      <form id="loginForm" class="panel login-panel">
+        <p class="eyebrow">AUTHORIZED STAFF ONLY</p>
+        <h1>Staff Booking Panel</h1>
+        <p>Sign in with your Lodestar staff credentials.</p>
+        <label>Username<input id="staffUser" name="username" autocomplete="username" required /></label>
+        <label>Password<input id="staffPassword" name="password" type="password" autocomplete="current-password" required /></label>
+        <p id="loginError" class="form-error" role="alert" hidden></p>
+        <button class="button button-primary" type="submit">Sign In</button>
+      </form>
+    </section>
+
+    <section id="panelView" class="workspace" hidden>
+      <div class="workspace-heading">
+        <div><p class="eyebrow">SECURE OPERATIONS</p><h1>Quote and Book Freight</h1></div>
+        <p>Bookings require a second confirmation and are submitted only from the Lodestar backend.</p>
+      </div>
+
+      <form id="staffQuoteForm" class="panel quote-form">
+        <fieldset class="mode-picker">
+          <legend>Freight Mode</legend>
+          <label><input type="radio" name="mode" value="ltl" required /><span>LTL</span></label>
+          <label><input type="radio" name="mode" value="ftl" required /><span>FTL</span></label>
+          <label><input type="radio" name="mode" value="box-truck" required /><span>Box Truck</span></label>
+          <label><input type="radio" name="mode" value="van" required /><span>Cargo Van</span></label>
+        </fieldset>
+
+        <div class="form-grid">
+          <label>Origin ZIP<input id="originZip" inputmode="numeric" pattern="[0-9]{5}" maxlength="5" required /></label>
+          <label>Destination ZIP<input id="destinationZip" inputmode="numeric" pattern="[0-9]{5}" maxlength="5" required /></label>
+          <label>Pickup Date<input id="pickupDate" type="date" required /></label>
+          <label>Number of Pallets<input id="pallets" type="number" min="1" step="1" required /></label>
+          <label>Total Weight (lb)<input id="totalWeight" type="number" min="1" step="0.01" required /></label>
+          <label>Freight Class<input id="freightClass" required /></label>
+          <label>Length (in)<input id="length" type="number" min="1" step="0.01" required /></label>
+          <label>Width (in)<input id="width" type="number" min="1" step="0.01" required /></label>
+          <label>Height (in)<input id="height" type="number" min="1" step="0.01" required /></label>
+          <label class="span-two">Commodity <small>Optional</small><input id="commodity" /></label>
+        </div>
+
+        <div class="service-grid">
+          <fieldset><legend>Pickup Services</legend>
+            <label><input type="checkbox" name="pickupService" value="liftgate-pickup" /> Liftgate</label>
+            <label><input type="checkbox" name="pickupService" value="driver-assist-pickup" /> Driver Assistance</label>
+          </fieldset>
+          <fieldset><legend>Delivery Services</legend>
+            <label><input type="checkbox" name="deliveryService" value="liftgate-delivery" /> Liftgate</label>
+            <label><input type="checkbox" name="deliveryService" value="driver-assist-delivery" /> Driver Assistance</label>
+          </fieldset>
+        </div>
+        <p id="quoteError" class="form-error" role="alert" hidden></p>
+        <button id="quoteButton" class="button button-primary" type="submit">Get Staff Quote</button>
+      </form>
+
+      <section id="staffResults" class="results" aria-live="polite" hidden></section>
+    </section>
+  </main>
+
+  <dialog id="bookingDialog" class="booking-dialog">
+    <form id="bookingForm" class="booking-form">
+      <div class="dialog-heading">
+        <div><p class="eyebrow">SECOND CONFIRMATION</p><h2>Confirm Shipment Booking</h2></div>
+        <button id="closeBooking" class="dialog-close" type="button" aria-label="Close">×</button>
+      </div>
+      <div id="selectedQuoteSummary" class="confirmation-summary"></div>
+      <div class="booking-columns">
+        <fieldset data-stop="pickup"><legend>Pickup</legend>
+          <label>Company<input name="company" /></label><label>Street<input name="street" required /></label>
+          <label>Suite / Dock<input name="street2" /></label><label>City<input name="city" required /></label>
+          <label>State<input name="state" maxlength="2" required /></label><label>ZIP<input name="zipCode" required /></label>
+          <label>Contact Name<input name="contactName" required /></label><label>Phone<input name="phone" type="tel" required /></label>
+          <label>Email<input name="email" type="email" required /></label>
+          <div class="time-row"><label>Window From<input name="windowFrom" type="time" /></label><label>Window To<input name="windowTo" type="time" /></label></div>
+        </fieldset>
+        <fieldset data-stop="delivery"><legend>Delivery</legend>
+          <label>Company<input name="company" /></label><label>Street<input name="street" required /></label>
+          <label>Suite / Dock<input name="street2" /></label><label>City<input name="city" required /></label>
+          <label>State<input name="state" maxlength="2" required /></label><label>ZIP<input name="zipCode" required /></label>
+          <label>Contact Name<input name="contactName" required /></label><label>Phone<input name="phone" type="tel" required /></label>
+          <label>Email<input name="email" type="email" required /></label>
+          <div class="time-row"><label>Window From<input name="windowFrom" type="time" /></label><label>Window To<input name="windowTo" type="time" /></label></div>
+        </fieldset>
+      </div>
+      <div class="form-grid booking-meta">
+        <label>Reference / PO<input id="bookingReference" /></label>
+        <label class="span-two">Special Instructions<textarea id="bookingNotes" rows="3"></textarea></label>
+      </div>
+      <div class="confirmation-warning"><strong>This action books the selected shipment.</strong><span>Review the carrier, price, addresses, contacts, and load details before confirming.</span></div>
+      <div id="bookingDisabledNotice" class="booking-disabled" role="status" hidden>Production booking is currently disabled.</div>
+      <p id="bookingError" class="form-error" role="alert" hidden></p>
+      <button id="confirmBooking" class="button button-danger" type="submit">Confirm Booking</button>
+    </form>
+  </dialog>
+
+  <script src="/static/staff.js" defer></script>
+</body>
+</html>

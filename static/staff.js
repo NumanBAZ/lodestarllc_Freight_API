@@ -4,6 +4,8 @@ const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 
 const staffState = {
+  authState: "checking",
+  username: "",
   csrfToken: "",
   bookingEnabled: false,
   selectedQuote: null,
@@ -52,32 +54,42 @@ function futureDate() {
   return value.toISOString().slice(0, 10);
 }
 
-function showAuthenticated(username, csrfToken, bookingEnabled) {
-  staffState.csrfToken = csrfToken;
-  staffState.bookingEnabled = bookingEnabled === true;
-  $("#loginView").hidden = true;
-  $("#panelView").hidden = false;
-  $("#staffIdentity").hidden = false;
-  $("#staffUsername").textContent = username;
-}
+function renderAuthState(authState, session = {}) {
+  const authenticated = authState === "authenticated";
+  const checking = authState === "checking";
+  staffState.authState = authState;
+  staffState.username = authenticated ? String(session.username || "") : "";
+  staffState.csrfToken = authenticated ? String(session.csrfToken || "") : "";
+  staffState.bookingEnabled = authenticated && session.bookingEnabled === true;
+  if (!authenticated) staffState.selectedQuote = null;
 
-function showLoggedOut() {
-  staffState.csrfToken = "";
-  staffState.bookingEnabled = false;
-  staffState.selectedQuote = null;
-  $("#panelView").hidden = true;
-  $("#staffIdentity").hidden = true;
-  $("#loginView").hidden = false;
+  $("#authLoading").hidden = !checking;
+  $("#loginView").hidden = checking || authenticated;
+  $("#panelView").hidden = !authenticated;
+  $("#staffIdentity").hidden = !authenticated;
+  $("#staffUsername").textContent = staffState.username;
 }
 
 async function restoreSession() {
-  const response = await fetch("/api/staff/session", { headers: { Accept: "application/json" } });
-  if (!response.ok) {
-    showLoggedOut();
-    return;
+  renderAuthState("checking");
+  try {
+    const response = await fetch("/api/staff/session", {
+      headers: { Accept: "application/json" },
+      cache: "no-store"
+    });
+    if (!response.ok) {
+      renderAuthState("anonymous");
+      return;
+    }
+    const result = await response.json();
+    renderAuthState("authenticated", {
+      username: result.username,
+      csrfToken: result.csrf_token,
+      bookingEnabled: result.booking_enabled
+    });
+  } catch {
+    renderAuthState("anonymous");
   }
-  const result = await response.json();
-  showAuthenticated(result.username, result.csrf_token, result.booking_enabled);
 }
 
 function checkedValues(name) {
@@ -184,6 +196,7 @@ $("#loginForm").addEventListener("submit", async (event) => {
   showError($("#loginError"), "");
   const button = $('button[type="submit"]', form);
   button.disabled = true;
+  renderAuthState("checking");
   try {
     const response = await fetch("/api/staff/login", {
       method: "POST",
@@ -193,8 +206,13 @@ $("#loginForm").addEventListener("submit", async (event) => {
     const result = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(errorMessage(result, "Unable to sign in."));
     form.reset();
-    showAuthenticated(result.username, result.csrf_token, result.booking_enabled);
+    renderAuthState("authenticated", {
+      username: result.username,
+      csrfToken: result.csrf_token,
+      bookingEnabled: result.booking_enabled
+    });
   } catch (error) {
+    renderAuthState("anonymous");
     showError($("#loginError"), error.message);
   } finally {
     button.disabled = false;
@@ -202,8 +220,25 @@ $("#loginForm").addEventListener("submit", async (event) => {
 });
 
 $("#logoutButton").addEventListener("click", async () => {
-  await fetch("/api/staff/logout", { method: "POST", headers: { "X-Staff-CSRF": staffState.csrfToken } });
-  showLoggedOut();
+  const currentSession = {
+    username: staffState.username,
+    csrfToken: staffState.csrfToken,
+    bookingEnabled: staffState.bookingEnabled
+  };
+  renderAuthState("checking");
+  try {
+    const response = await fetch("/api/staff/logout", {
+      method: "POST",
+      headers: { "X-Staff-CSRF": currentSession.csrfToken }
+    });
+    if (!response.ok) throw new Error("Unable to log out. Please try again.");
+    $("#staffResults").hidden = true;
+    $("#staffResults").innerHTML = "";
+    renderAuthState("anonymous");
+  } catch (error) {
+    renderAuthState("authenticated", currentSession);
+    showError($("#quoteError"), error.message);
+  }
 });
 
 $("#staffQuoteForm").addEventListener("submit", async (event) => {
@@ -223,7 +258,11 @@ $("#staffQuoteForm").addEventListener("submit", async (event) => {
       body: JSON.stringify(staffState.lastPayload)
     });
     const result = await response.json().catch(() => ({}));
-    if (response.status === 401) { showLoggedOut(); throw new Error("Your staff session expired. Sign in again."); }
+    if (response.status === 401) {
+      renderAuthState("anonymous");
+      showError($("#loginError"), "Your staff session expired. Sign in again.");
+      return;
+    }
     if (!response.ok || result.ok === false) throw new Error(errorMessage(result, "Unable to retrieve staff quotes."));
     renderQuotes(result.options || [], mode);
   } catch (error) {
@@ -293,4 +332,4 @@ $("#closeBooking").addEventListener("click", () => {
 
 $("#pickupDate").min = new Date().toISOString().slice(0, 10);
 $("#pickupDate").value = futureDate();
-restoreSession().catch(showLoggedOut);
+restoreSession();

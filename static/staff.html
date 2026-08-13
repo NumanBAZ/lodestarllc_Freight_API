@@ -23,7 +23,14 @@
   </header>
 
   <main>
-    <section id="loginView" class="login-shell">
+    <section id="authLoading" class="login-shell" aria-live="polite">
+      <div class="panel auth-loading-panel">
+        <p class="eyebrow">SECURE STAFF ACCESS</p>
+        <p>Checking staff session…</p>
+      </div>
+    </section>
+
+    <section id="loginView" class="login-shell" hidden>
       <form id="loginForm" class="panel login-panel">
         <p class="eyebrow">AUTHORIZED STAFF ONLY</p>
         <h1>Staff Booking Panel</h1>

@@ -408,6 +408,24 @@ class FreightQuoteTests(unittest.TestCase):
         self.assertIn("if (!staffState.bookingEnabled)", javascript)
         self.assertIn('headers: { "Content-Type": "application/json", "X-Staff-CSRF"', javascript)
 
+    def test_staff_auth_ui_uses_mutually_exclusive_central_state(self) -> None:
+        html = Path("static/staff.html").read_text(encoding="utf-8")
+        javascript = Path("static/staff.js").read_text(encoding="utf-8")
+        css = Path("static/staff.css").read_text(encoding="utf-8")
+
+        self.assertIn('id="authLoading"', html)
+        self.assertIn('id="loginView" class="login-shell" hidden', html)
+        self.assertIn('id="panelView" class="workspace" hidden', html)
+        self.assertIn("[hidden] { display:none !important; }", css)
+        self.assertIn("function renderAuthState(authState, session = {})", javascript)
+        self.assertIn('renderAuthState("checking")', javascript)
+        self.assertIn('renderAuthState("anonymous")', javascript)
+        self.assertIn('renderAuthState("authenticated", {', javascript)
+        self.assertIn('$("#loginView").hidden = checking || authenticated', javascript)
+        self.assertIn('$("#panelView").hidden = !authenticated', javascript)
+        self.assertNotIn("function showAuthenticated", javascript)
+        self.assertNotIn("function showLoggedOut", javascript)
+
     def test_booking_is_disabled_by_default_on_frontend_and_backend(self) -> None:
         csrf = self.login_staff()
         FakeBookingClient.call_count = 0

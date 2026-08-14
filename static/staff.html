@@ -53,6 +53,13 @@
           <div><p class="eyebrow">CUSTOMER INTAKE</p><h2>Customer Quote Requests</h2></div>
           <button id="refreshCustomerRequests" class="button button-quiet" type="button">Refresh</button>
         </div>
+        <div id="requestStatusFilters" class="request-status-filters" aria-label="Filter quote requests by status">
+          <button class="request-filter is-active" type="button" data-request-filter="all" aria-pressed="true">All</button>
+          <button class="request-filter" type="button" data-request-filter="new" aria-pressed="false">New</button>
+          <button class="request-filter" type="button" data-request-filter="approved" aria-pressed="false">Approved</button>
+          <button class="request-filter" type="button" data-request-filter="rejected" aria-pressed="false">Rejected</button>
+          <button class="request-filter" type="button" data-request-filter="booked" aria-pressed="false">Booked</button>
+        </div>
         <p id="customerRequestsMessage" class="requests-message">Loading customer quote requests…</p>
         <div id="customerRequestsList" class="customer-requests-list" hidden></div>
       </section>
@@ -104,7 +111,41 @@
         <button id="closeRequestDetail" class="dialog-close" type="button" aria-label="Close">×</button>
       </div>
       <div id="customerRequestDetail" class="request-detail-content"></div>
-      <button id="bookCustomerRequest" class="button button-primary" type="button" hidden>Book Shipment</button>
+      <p id="requestActionError" class="form-error" role="alert" hidden></p>
+      <div class="request-actions">
+        <button id="approveCustomerRequest" class="button button-primary" type="button" hidden>Approve Request</button>
+        <button id="rejectCustomerRequest" class="button button-danger" type="button" hidden>Reject Request</button>
+        <button id="messageCustomer" class="button button-quiet" type="button">Message Customer</button>
+        <button id="bookCustomerRequest" class="button button-primary" type="button" hidden>Book Shipment</button>
+      </div>
+    </div>
+  </dialog>
+
+  <dialog id="rejectRequestDialog" class="booking-dialog compact-dialog">
+    <form id="rejectRequestForm" class="booking-form">
+      <div class="dialog-heading">
+        <div><p class="eyebrow">CONFIRM STATUS</p><h2>Reject Request</h2></div>
+        <button id="closeRejectRequest" class="dialog-close" type="button" aria-label="Close">×</button>
+      </div>
+      <p>This request will be marked as rejected. It can be approved again later.</p>
+      <label>Reject reason <small>Optional</small><textarea id="rejectReason" rows="4" maxlength="1000"></textarea></label>
+      <p id="rejectRequestError" class="form-error" role="alert" hidden></p>
+      <button id="confirmRejectRequest" class="button button-danger" type="submit">Confirm Rejection</button>
+    </form>
+  </dialog>
+
+  <dialog id="messageCustomerDialog" class="booking-dialog compact-dialog">
+    <div class="booking-form">
+      <div class="dialog-heading">
+        <div><p class="eyebrow">CUSTOMER CONTACT</p><h2>Message Customer</h2></div>
+        <button id="closeMessageCustomer" class="dialog-close" type="button" aria-label="Close">×</button>
+      </div>
+      <div id="messageCustomerContact" class="contact-summary"></div>
+      <label>Message<textarea id="customerMessageText" rows="6" maxlength="2000"></textarea></label>
+      <div class="request-actions">
+        <a id="openCustomerEmail" class="button button-primary" href="#">Open Email App</a>
+        <a id="callCustomerFromMessage" class="button button-quiet" href="#">Call Customer</a>
+      </div>
     </div>
   </dialog>
 

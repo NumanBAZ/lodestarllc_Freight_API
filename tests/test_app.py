@@ -474,6 +474,13 @@ class FreightQuoteTests(unittest.TestCase):
                 self.client.get(f"/api/staff/quote-requests/{request_id}").status_code,
                 401,
             )
+            self.assertEqual(
+                self.client.patch(
+                    f"/api/staff/quote-requests/{request_id}/status",
+                    json={"status": "approved"},
+                ).status_code,
+                401,
+            )
 
             csrf = self.login_staff()
             headers = {"X-Staff-CSRF": csrf}
@@ -488,7 +495,23 @@ class FreightQuoteTests(unittest.TestCase):
             self.assertEqual(detail.status_code, 200)
             self.assertEqual(detail.json()["shipment"]["total_weight_lbs"], 1001)
             self.assertEqual(detail.json()["selected_quote"]["quote_id"], "quote-b")
-            self.assertTrue(detail.json()["booking_quote_token"])
+            self.assertNotIn("booking_quote_token", detail.json())
+
+            self.assertEqual(
+                self.client.patch(
+                    f"/api/staff/quote-requests/{request_id}/status",
+                    json={"status": "approved"},
+                ).status_code,
+                403,
+            )
+            approved = self.client.patch(
+                f"/api/staff/quote-requests/{request_id}/status",
+                json={"status": "approved"},
+                headers=headers,
+            )
+            self.assertEqual(approved.status_code, 200)
+            self.assertEqual(store[request_id]["status"], "approved")
+            self.assertTrue(approved.json()["booking_quote_token"])
 
             with (
                 patch.object(app_module.httpx, "AsyncClient", FakeBookingClient),
@@ -503,7 +526,7 @@ class FreightQuoteTests(unittest.TestCase):
             ):
                 booked = self.client.post(
                     "/api/staff/book",
-                    json=self.booking_details(detail.json()["booking_quote_token"]),
+                    json=self.booking_details(approved.json()["booking_quote_token"]),
                     headers=headers,
                 )
 
@@ -518,6 +541,83 @@ class FreightQuoteTests(unittest.TestCase):
             )
             self.assertEqual(booked_detail.json()["status"], "booked")
             self.assertNotIn("booking_quote_token", booked_detail.json())
+
+    def test_reject_reason_rejected_booking_and_reapproval(self) -> None:
+        request_id = "qr_abcdefghijklmnop"
+        selected_quote = {
+            "carrier_name": "Carrier B",
+            "price_usd": 425.80,
+            "transit_days": 2,
+            "service_level": "Standard",
+            "bookable": True,
+            "quote_id": "quote-b",
+            "option_id": "option-b",
+        }
+        store = {
+            request_id: {
+                "id": request_id,
+                "customer": {
+                    "full_name": "Alex Customer",
+                    "email": "alex@example.com",
+                    "phone": "+1 213 555 0199",
+                },
+                "freight_type": "LTL",
+                "shipment": copy.deepcopy(self.payload),
+                "selected_quote": selected_quote,
+                "created_at": "2026-08-14T10:00:00+00:00",
+                "status": "new",
+                "shipment_id": None,
+            }
+        }
+
+        async def fake_get(value: str) -> dict[str, Any] | None:
+            record = store.get(value)
+            return copy.deepcopy(record) if record else None
+
+        async def fake_update(record: dict[str, Any]) -> None:
+            store[record["id"]] = copy.deepcopy(record)
+
+        with (
+            patch.object(app_module, "get_quote_request", side_effect=fake_get),
+            patch.object(app_module, "update_quote_request", side_effect=fake_update),
+        ):
+            csrf = self.login_staff()
+            headers = {"X-Staff-CSRF": csrf}
+            rejected = self.client.patch(
+                f"/api/staff/quote-requests/{request_id}/status",
+                json={"status": "rejected", "reject_reason": "Pickup date unavailable"},
+                headers=headers,
+            )
+            self.assertEqual(rejected.status_code, 200)
+            self.assertEqual(store[request_id]["status"], "rejected")
+            self.assertEqual(store[request_id]["reject_reason"], "Pickup date unavailable")
+            self.assertNotIn("booking_quote_token", rejected.json())
+
+            stale_token = app_module.quote_token(
+                {"username": "staff-user"},
+                selected_quote,
+                "ltl",
+                self.payload,
+                request_id=request_id,
+            )
+            with patch.dict(os.environ, {"STAFF_BOOKING_ENABLED": "true"}):
+                blocked = self.client.post(
+                    "/api/staff/book",
+                    json=self.booking_details(stale_token),
+                    headers=headers,
+                )
+            self.assertEqual(blocked.status_code, 409)
+            self.assertEqual(FakeBookingClient.call_count, 0)
+
+            approved = self.client.patch(
+                f"/api/staff/quote-requests/{request_id}/status",
+                json={"status": "approved"},
+                headers=headers,
+            )
+            self.assertEqual(approved.status_code, 200)
+            self.assertEqual(store[request_id]["status"], "approved")
+            self.assertEqual(store[request_id]["reject_reason"], "Pickup date unavailable")
+            self.assertIn("booking_quote_token", approved.json())
 
     def test_public_quote_request_form_and_staff_request_dashboard_are_present(self) -> None:
         public_html = Path("static/index.html").read_text(encoding="utf-8")
@@ -537,7 +637,16 @@ class FreightQuoteTests(unittest.TestCase):
         self.assertIn('id="customerRequestsList"', staff_html)
         self.assertIn('id="requestDetailDialog"', staff_html)
         self.assertIn('fetch("/api/staff/quote-requests"', staff_javascript)
+        self.assertIn('/status`, {', staff_javascript)
         self.assertIn("booking_quote_token", staff_javascript)
+        for status in ("all", "new", "approved", "rejected", "booked"):
+            self.assertIn(f'data-request-filter="{status}"', staff_html)
+        for action in ("Approve Request", "Reject Request", "Contact Customer", "Message Customer", "Send Email", "Call Customer"):
+            self.assertIn(action, staff_html + staff_javascript)
+        self.assertIn('return `mailto:${address}`', staff_javascript)
+        self.assertIn('return number ? `tel:${number}`', staff_javascript)
+        self.assertIn("Lodestar Logistics - Your Freight Quote Request", staff_javascript)
+        self.assertIn("Request ID: ${requestId}", staff_javascript)
 
     def test_quote_request_store_uses_persistent_upstash_keys(self) -> None:
         record = {
@@ -554,6 +663,21 @@ class FreightQuoteTests(unittest.TestCase):
         self.assertEqual(commands[0][1], "lodestar:quote-request:qr_abcdefghijklmnop")
         self.assertEqual(commands[1][0], "ZADD")
         self.assertEqual(commands[1][1], "lodestar:quote-requests")
+
+    def test_staff_request_list_places_new_requests_first(self) -> None:
+        records = [
+            {"id": "qr_approvedapproved", "status": "approved"},
+            {"id": "qr_newnewnewnewnew", "status": "new"},
+            {"id": "qr_rejectedreject", "status": "rejected"},
+        ]
+        csrf = self.login_staff()
+        with patch.object(app_module, "list_quote_requests", AsyncMock(return_value=records)):
+            response = self.client.get(
+                "/api/staff/quote-requests",
+                headers={"X-Staff-CSRF": csrf},
+            )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["requests"][0]["status"], "new")
 
     def test_staff_frontend_requires_second_confirmation_and_hides_unbookable_actions(self) -> None:
         html = Path("static/staff.html").read_text(encoding="utf-8")

@@ -30,6 +30,11 @@ STAFF_QUOTE_TOKEN_SECONDS = 2 * 60 * 60
 PUBLIC_QUOTE_TOKEN_SECONDS = 2 * 60 * 60
 QUOTE_REQUEST_INDEX_KEY = "lodestar:quote-requests"
 QUOTE_REQUEST_KEY_PREFIX = "lodestar:quote-request:"
+QUOTE_REQUEST_STATUSES = {"new", "approved", "rejected", "booked"}
+STAFF_STATUS_TRANSITIONS = {
+    "new": {"approved", "rejected"},
+    "rejected": {"approved"},
+}
 
 STAFF_QUOTE_PATHS = {
     "ltl": "/ltl/market-options",
@@ -833,6 +838,7 @@ async def staff_quote_requests(request: Request) -> dict[str, Any]:
     session = require_staff(request)
     require_csrf(request, session)
     records = await list_quote_requests()
+    records.sort(key=lambda record: record.get("status") != "new")
     return {
         "requests": [
             {
@@ -853,19 +859,14 @@ async def staff_quote_requests(request: Request) -> dict[str, Any]:
     }
 
 
-@app.get("/api/staff/quote-requests/{request_id}")
-async def staff_quote_request_detail(request_id: str, request: Request) -> dict[str, Any]:
-    session = require_staff(request)
-    require_csrf(request, session)
-    record = await get_quote_request(request_id)
-    if record is None:
-        raise HTTPException(status_code=404, detail="Quote request not found")
-
+def staff_quote_request_detail_payload(
+    record: dict[str, Any], session: dict[str, Any]
+) -> dict[str, Any]:
     selected_quote = record.get("selected_quote") or {}
     shipment = record.get("shipment") or {}
     detail = dict(record)
     if (
-        record.get("status") == "new"
+        record.get("status") == "approved"
         and isinstance(selected_quote, dict)
         and selected_quote.get("bookable") is True
         and selected_quote.get("quote_id")
@@ -880,9 +881,49 @@ async def staff_quote_request_detail(request_id: str, request: Request) -> dict[
                 "pickup_services": accessorials.get("pickup") or [],
                 "delivery_services": accessorials.get("delivery") or [],
             },
-            request_id=request_id,
+            request_id=str(record.get("id")),
         )
     return detail
+
+
+@app.get("/api/staff/quote-requests/{request_id}")
+async def staff_quote_request_detail(request_id: str, request: Request) -> dict[str, Any]:
+    session = require_staff(request)
+    require_csrf(request, session)
+    record = await get_quote_request(request_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="Quote request not found")
+    return staff_quote_request_detail_payload(record, session)
+
+
+@app.patch("/api/staff/quote-requests/{request_id}/status")
+async def staff_quote_request_status(
+    request_id: str,
+    request: Request,
+    body: dict[str, Any] = Body(default_factory=dict),
+) -> dict[str, Any]:
+    session = require_staff(request)
+    require_csrf(request, session)
+    record = await get_quote_request(request_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="Quote request not found")
+
+    current_status = clean_text(record.get("status"), maximum=20).lower() or "new"
+    next_status = clean_text(body.get("status"), maximum=20).lower()
+    if next_status not in QUOTE_REQUEST_STATUSES or next_status == "booked":
+        raise HTTPException(status_code=400, detail="Invalid quote request status")
+    if next_status not in STAFF_STATUS_TRANSITIONS.get(current_status, set()):
+        raise HTTPException(
+            status_code=409,
+            detail=f"Quote request cannot change from {current_status} to {next_status}",
+        )
+
+    if next_status == "rejected":
+        record["reject_reason"] = clean_text(body.get("reject_reason"), maximum=1000) or None
+    record["status"] = next_status
+    record["status_updated_at"] = datetime.now(timezone.utc).isoformat()
+    await update_quote_request(record)
+    return staff_quote_request_detail_payload(record, session)
 
 
 @app.post("/api/staff/logout")
@@ -981,7 +1022,7 @@ async def staff_book(
                 "idempotent_replay": True,
                 "customer_request_id": customer_request_id,
             }
-        if customer_request.get("status") != "new":
+        if customer_request.get("status") != "approved":
             raise HTTPException(status_code=409, detail="Quote request cannot be booked")
 
     booking_body: dict[str, Any] = {

@@ -10,6 +10,8 @@ const staffState = {
   bookingEnabled: false,
   selectedQuote: null,
   selectedCustomerRequest: null,
+  customerRequests: [],
+  requestFilter: "all",
   lastPayload: null,
   bookingPending: false
 };
@@ -65,6 +67,7 @@ function renderAuthState(authState, session = {}) {
   if (!authenticated) {
     staffState.selectedQuote = null;
     staffState.selectedCustomerRequest = null;
+    staffState.customerRequests = [];
   }
 
   $("#authLoading").hidden = !checking;
@@ -129,6 +132,24 @@ function dateTimeText(value) {
   return new Intl.DateTimeFormat("en-US", { dateStyle: "medium", timeStyle: "short" }).format(parsed);
 }
 
+function customerEmailHref(email, message = "", customerName = "", requestId = "") {
+  const address = String(email || "").trim();
+  if (!address) return "";
+  if (!message && !requestId) return `mailto:${address}`;
+  const subject = "Lodestar Logistics - Your Freight Quote Request";
+  const body = `Hello ${customerName || "Customer"},\n\nRequest ID: ${requestId}\n\n${message}`;
+  return `mailto:${address}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+}
+
+function customerPhoneHref(phone) {
+  const number = String(phone || "").trim().replace(/[^+\d]/g, "");
+  return number ? `tel:${number}` : "";
+}
+
+function statusClass(status) {
+  return ["approved", "rejected", "booked"].includes(status) ? `is-${status}` : "";
+}
+
 function requestRow(request) {
   return `<button class="customer-request-row" type="button" data-customer-request="${escapeHtml(request.id)}">
     <span><strong>${escapeHtml(request.customer || "Not provided")}</strong></span>
@@ -137,8 +158,31 @@ function requestRow(request) {
     <span>${escapeHtml(formatPrice(request.price_usd))}</span>
     <span>${escapeHtml(request.freight_type || "—")}</span>
     <span>${escapeHtml(dateTimeText(request.created_at))}</span>
-    <span class="request-status ${request.status === "booked" ? "is-booked" : ""}">${escapeHtml(request.status || "new")}</span>
+    <span class="request-status ${statusClass(request.status)}">${escapeHtml(request.status || "new")}</span>
   </button>`;
+}
+
+function renderCustomerRequests() {
+  const message = $("#customerRequestsMessage");
+  const list = $("#customerRequestsList");
+  const requests = staffState.customerRequests.filter((request) => (
+    staffState.requestFilter === "all" || request.status === staffState.requestFilter
+  ));
+  if (!requests.length) {
+    list.hidden = true;
+    list.innerHTML = "";
+    message.hidden = false;
+    message.textContent = staffState.customerRequests.length
+      ? `No ${staffState.requestFilter} customer quote requests.`
+      : "No customer quote requests yet.";
+    return;
+  }
+  list.innerHTML = requests.map(requestRow).join("");
+  list.hidden = false;
+  message.hidden = true;
+  $$('[data-customer-request]', list).forEach((button) => button.addEventListener("click", () => {
+    openCustomerRequestDetail(button.dataset.customerRequest);
+  }));
 }
 
 async function loadCustomerRequests() {
@@ -160,17 +204,8 @@ async function loadCustomerRequests() {
       return;
     }
     if (!response.ok) throw new Error(errorMessage(result, "Unable to load customer quote requests."));
-    const requests = Array.isArray(result.requests) ? result.requests : [];
-    if (!requests.length) {
-      message.textContent = "No customer quote requests yet.";
-      return;
-    }
-    list.innerHTML = requests.map(requestRow).join("");
-    list.hidden = false;
-    message.hidden = true;
-    $$('[data-customer-request]', list).forEach((button) => button.addEventListener("click", () => {
-      openCustomerRequestDetail(button.dataset.customerRequest);
-    }));
+    staffState.customerRequests = Array.isArray(result.requests) ? result.requests : [];
+    renderCustomerRequests();
   } catch (error) {
     message.textContent = error.message;
   }
@@ -178,6 +213,17 @@ async function loadCustomerRequests() {
 
 function detailItem(label, value) {
   return `<div><span>${escapeHtml(label)}</span><strong>${escapeHtml(value ?? "Not provided")}</strong></div>`;
+}
+
+function customerContactActions(customer) {
+  const emailHref = customerEmailHref(customer.email);
+  const phoneHref = customerPhoneHref(customer.phone);
+  return `<div class="contact-customer-block"><strong>Contact Customer</strong>
+    ${emailHref || phoneHref ? `<div class="customer-contact-actions">
+      ${emailHref ? `<a class="button button-primary" href="${escapeHtml(emailHref)}">Send Email</a>` : ""}
+      ${phoneHref ? `<a class="button button-quiet" href="${escapeHtml(phoneHref)}">Call Customer</a>` : ""}
+    </div>` : "<small>No contact methods available.</small>"}
+  </div>`;
 }
 
 function requestDetailMarkup(request) {
@@ -189,7 +235,8 @@ function requestDetailMarkup(request) {
     <section class="request-detail-section"><h3>Customer</h3><div class="request-detail-grid">
       ${detailItem("Full Name", customer.full_name)}${detailItem("Email", customer.email)}${detailItem("Phone", customer.phone)}
       ${detailItem("Status", request.status)}${detailItem("Created At", dateTimeText(request.created_at))}${detailItem("Shipment ID", request.shipment_id)}
-    </div></section>
+      ${request.reject_reason ? detailItem("Reject Reason", request.reject_reason) : ""}
+    </div>${customerContactActions(customer)}</section>
     <section class="request-detail-section"><h3>Shipment</h3><div class="request-detail-grid">
       ${detailItem("Route", `${shipment.origin_zip || "—"} → ${shipment.destination_zip || "—"}`)}${detailItem("Pickup Date", shipment.pickup_date)}${detailItem("Freight Type", request.freight_type)}
       ${detailItem("Pallets", shipment.pallets)}${detailItem("Total Weight", shipment.total_weight_lbs ? `${shipment.total_weight_lbs} lb` : null)}${detailItem("Dimensions", `${shipment.length_in || "—"} × ${shipment.width_in || "—"} × ${shipment.height_in || "—"} in`)}
@@ -203,6 +250,15 @@ function requestDetailMarkup(request) {
     </div></section>`;
 }
 
+function renderCustomerRequestDetail(request) {
+  staffState.selectedCustomerRequest = request;
+  $("#customerRequestDetail").innerHTML = requestDetailMarkup(request);
+  $("#approveCustomerRequest").hidden = !["new", "rejected"].includes(request.status);
+  $("#rejectCustomerRequest").hidden = request.status !== "new";
+  $("#bookCustomerRequest").hidden = !request.booking_quote_token || request.status !== "approved";
+  showError($("#requestActionError"), "");
+}
+
 async function openCustomerRequestDetail(requestId) {
   try {
     const response = await fetch(`/api/staff/quote-requests/${encodeURIComponent(requestId)}`, {
@@ -211,14 +267,56 @@ async function openCustomerRequestDetail(requestId) {
     });
     const result = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(errorMessage(result, "Unable to load quote request."));
-    staffState.selectedCustomerRequest = result;
-    $("#customerRequestDetail").innerHTML = requestDetailMarkup(result);
-    $("#bookCustomerRequest").hidden = !result.booking_quote_token || result.status !== "new";
+    renderCustomerRequestDetail(result);
     $("#requestDetailDialog").showModal();
   } catch (error) {
     $("#customerRequestsMessage").hidden = false;
     $("#customerRequestsMessage").textContent = error.message;
   }
+}
+
+async function updateCustomerRequestStatus(status, rejectReason = "", errorTarget = $("#requestActionError")) {
+  const request = staffState.selectedCustomerRequest;
+  if (!request?.id) return false;
+  showError(errorTarget, "");
+  try {
+    const response = await fetch(`/api/staff/quote-requests/${encodeURIComponent(request.id)}/status`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", "X-Staff-CSRF": staffState.csrfToken },
+      body: JSON.stringify({ status, reject_reason: rejectReason })
+    });
+    const result = await response.json().catch(() => ({}));
+    if (response.status === 401) {
+      renderAuthState("anonymous");
+      showError($("#loginError"), "Your staff session expired. Sign in again.");
+      return false;
+    }
+    if (!response.ok) throw new Error(errorMessage(result, "Unable to update this quote request."));
+    renderCustomerRequestDetail(result);
+    await loadCustomerRequests();
+    return true;
+  } catch (error) {
+    showError(errorTarget, error.message);
+    return false;
+  }
+}
+
+function renderMessageCustomerActions() {
+  const request = staffState.selectedCustomerRequest || {};
+  const customer = request.customer || {};
+  const message = $("#customerMessageText").value.trim();
+  $("#messageCustomerContact").innerHTML = `
+    <strong>${escapeHtml(customer.full_name || "Customer name not provided")}</strong>
+    <span>${escapeHtml(customer.email || "Email not provided")}</span>
+    <span>${escapeHtml(customer.phone || "Phone not provided")}</span>`;
+  const emailLink = $("#openCustomerEmail");
+  const emailHref = customerEmailHref(customer.email, message, customer.full_name, request.id);
+  emailLink.hidden = !emailHref;
+  emailLink.href = emailHref || "#";
+  const callLink = $("#callCustomerFromMessage");
+  const phoneHref = customerPhoneHref(customer.phone);
+  callLink.hidden = !phoneHref;
+  callLink.href = phoneHref || "#";
 }
 
 function quoteCard(option, index) {
@@ -347,6 +445,7 @@ $("#logoutButton").addEventListener("click", async () => {
     $("#staffResults").innerHTML = "";
     $("#customerRequestsList").hidden = true;
     $("#customerRequestsList").innerHTML = "";
+    staffState.customerRequests = [];
     renderAuthState("anonymous");
   } catch (error) {
     renderAuthState("authenticated", currentSession);
@@ -448,7 +547,42 @@ $("#closeBooking").addEventListener("click", () => {
 });
 
 $("#refreshCustomerRequests").addEventListener("click", loadCustomerRequests);
+$$('[data-request-filter]').forEach((button) => button.addEventListener("click", () => {
+  staffState.requestFilter = button.dataset.requestFilter;
+  $$('[data-request-filter]').forEach((filterButton) => {
+    const active = filterButton === button;
+    filterButton.classList.toggle("is-active", active);
+    filterButton.setAttribute("aria-pressed", String(active));
+  });
+  renderCustomerRequests();
+}));
 $("#closeRequestDetail").addEventListener("click", () => $("#requestDetailDialog").close());
+$("#approveCustomerRequest").addEventListener("click", async (event) => {
+  event.currentTarget.disabled = true;
+  await updateCustomerRequestStatus("approved");
+  event.currentTarget.disabled = false;
+});
+$("#rejectCustomerRequest").addEventListener("click", () => {
+  $("#rejectRequestForm").reset();
+  showError($("#rejectRequestError"), "");
+  $("#rejectRequestDialog").showModal();
+});
+$("#closeRejectRequest").addEventListener("click", () => $("#rejectRequestDialog").close());
+$("#rejectRequestForm").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const button = $("#confirmRejectRequest");
+  button.disabled = true;
+  const updated = await updateCustomerRequestStatus("rejected", $("#rejectReason").value.trim(), $("#rejectRequestError"));
+  button.disabled = false;
+  if (updated) $("#rejectRequestDialog").close();
+});
+$("#messageCustomer").addEventListener("click", () => {
+  $("#customerMessageText").value = "";
+  renderMessageCustomerActions();
+  $("#messageCustomerDialog").showModal();
+});
+$("#customerMessageText").addEventListener("input", renderMessageCustomerActions);
+$("#closeMessageCustomer").addEventListener("click", () => $("#messageCustomerDialog").close());
 $("#bookCustomerRequest").addEventListener("click", () => {
   const request = staffState.selectedCustomerRequest;
   if (!request?.booking_quote_token) return;

@@ -288,10 +288,8 @@ function rateEstimateMarkup(estimate) {
   if (!estimate) return "";
   return `
     <aside class="rate-estimate" role="note" aria-label="Competitive Rate Estimate">
-      <div><p class="section-kicker">MARKET GUIDANCE</p><h3>Competitive Rate Estimate</h3></div>
+      <h3>Competitive Rate Estimate</h3>
       <strong class="rate-estimate-price">${escapeHtml(formatPrice(estimate.average))}</strong>
-      <p>Calculated from the lowest ${estimate.sampleCount} of ${estimate.validQuoteCount} available carrier quotes.</p>
-      <small>This estimate is not an actual carrier quote and cannot be selected.</small>
     </aside>`;
 }
 
@@ -305,7 +303,6 @@ function optionTags(option, lowestPrice, shortestTransit) {
 function renderCarrierCard(option, index, lowestPrice, shortestTransit) {
   const carrier = String(option.carrier_name || "Carrier unavailable");
   const isBest = numericPrice(option) === lowestPrice;
-  const availability = option.bookable === true ? "Available for Booking" : "Rate Only — Contact to Confirm";
   return `
     <article class="offer-card ${isBest ? "is-best" : ""}" data-offer-index="${index}" data-network-source="${option.is_warp === true ? "direct" : "carrier"}">
       <div class="offer-tags">${optionTags(option, lowestPrice, shortestTransit)}</div>
@@ -316,12 +313,7 @@ function renderCarrierCard(option, index, lowestPrice, shortestTransit) {
       <div class="offer-price">${escapeHtml(formatPrice(option.price_usd))}<small>USD</small></div>
       <dl class="offer-metrics">
         <div><dt>Estimated Transit</dt><dd>${escapeHtml(transitText(option.transit_days))}</dd></div>
-        <div><dt>Availability</dt><dd class="${option.bookable === true ? "status-ready" : "status-info"}">${availability}</dd></div>
       </dl>
-      <div class="quote-reference">
-        <span>Quote / Option ID</span>
-        <code title="${escapeHtml(`${option.quote_id || "Not provided"} / ${option.option_id || "Not provided"}`)}">${escapeHtml(option.quote_id || "Not provided")} / ${escapeHtml(option.option_id || "Not provided")}</code>
-      </div>
       <button class="offer-select" type="button" data-select-offer="${index}">Select Quote</button>
     </article>`;
 }
@@ -336,7 +328,7 @@ function renderMarketResults() {
 
   $("#quoteResult").innerHTML = `
     <div class="results-toolbar">
-      <div><p class="section-kicker">LIVE FREIGHT PRICING</p><h2>Available Carrier Quotes</h2><p>${options.length} current ${options.length === 1 ? "option" : "options"} returned by the carrier network.</p></div>
+      <div><p class="section-kicker results-eyebrow">LIVE FREIGHT PRICING</p><h2>Available Carrier Quotes</h2><p class="results-count"><strong>${options.length}</strong> Carrier ${options.length === 1 ? "Option" : "Options"} Available</p></div>
       <label class="sort-box">SORT BY
         <select id="sortOffers" class="sort-select">
           <option value="price" ${quoteState.sort === "price" ? "selected" : ""}>Lowest Price</option>
@@ -475,11 +467,6 @@ async function loadContact() {
     const response = await fetch("/api/public-config");
     if (!response.ok) return;
     quoteState.contact = await response.json();
-    const phone = String(quoteState.contact.phone || "").trim();
-    if (phone) {
-      $("#headerPhone").href = `tel:${phone}`;
-      $("#headerPhoneText").textContent = phone;
-    }
   } catch {
     quoteState.contact = { whatsapp: "", phone: "", email: "" };
   }

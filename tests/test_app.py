@@ -899,8 +899,8 @@ class FreightQuoteTests(unittest.TestCase):
         self.assertIn("Competitive Rate Estimate", javascript)
         self.assertIn("Math.min(10, Math.max(3, Math.ceil(validQuoteCount / 3)))", javascript)
         self.assertIn("validPrices.slice(0, sampleCount)", javascript)
-        self.assertIn("Calculated from the lowest ${estimate.sampleCount} of ${estimate.validQuoteCount}", javascript)
-        self.assertIn("not an actual carrier quote and cannot be selected", javascript)
+        self.assertNotIn("Calculated from the lowest ${estimate.sampleCount} of ${estimate.validQuoteCount}", javascript)
+        self.assertNotIn("not an actual carrier quote and cannot be selected", javascript)
 
     def test_selected_quote_modal_contains_only_requested_summary_fields(self) -> None:
         javascript = Path("static/app.js").read_text(encoding="utf-8")
@@ -910,6 +910,29 @@ class FreightQuoteTests(unittest.TestCase):
         for label in ("Carrier", "Price", "Transit Time", "Service Level", "Quote ID"):
             self.assertIn(f"<span>{label}</span>", summary)
         self.assertNotIn("Freight Type", summary)
+
+    def test_public_results_hide_technical_fields_and_use_compact_header(self) -> None:
+        html = Path("static/index.html").read_text(encoding="utf-8")
+        javascript = Path("static/app.js").read_text(encoding="utf-8")
+        css = Path("static/style.css").read_text(encoding="utf-8")
+        card_start = javascript.index("function renderCarrierCard")
+        card_end = javascript.index("function renderMarketResults", card_start)
+        card_markup = javascript[card_start:card_end]
+        header = html[html.index("<header"):html.index("</header>")]
+
+        for hidden_public_field in ("Availability", "Rate Only", "Quote / Option ID"):
+            self.assertNotIn(hidden_public_field, card_markup)
+        self.assertIn("option.service_level", card_markup)
+        self.assertIn("option.price_usd", card_markup)
+        self.assertIn("option.transit_days", card_markup)
+        self.assertIn("openQuoteDialog(sortedOptions()", javascript)
+        self.assertIn("request_token: requestToken", javascript)
+        self.assertIn("Get Contact", header)
+        for removed_header_copy in ("Instant Quote", "Services", "Phone support", "Contact us", "Get a Quote"):
+            self.assertNotIn(removed_header_copy, header)
+        self.assertNotIn("headerPhone", javascript)
+        self.assertIn("Carrier ${options.length === 1 ? \"Option\" : \"Options\"} Available", javascript)
+        self.assertIn("grid-template-columns:repeat(3,minmax(0,1fr))", css)
 
     def test_customer_copy_uses_lodestar_logistics(self) -> None:
         customer_copy = "".join(
@@ -929,7 +952,7 @@ class FreightQuoteTests(unittest.TestCase):
         self.assertNotIn("section-number", html)
         self.assertNotIn("progress-strip", html)
         self.assertNotIn("Live carrier pricing through the secure WARP network", html)
-        self.assertIn("Secure and transparent freight pricing", html)
+        self.assertNotIn("Secure and transparent freight pricing", html)
         self.assertIn("background: #f0eee8", css)
         self.assertIn("border: 1px solid #cac6bc", css)
         self.assertIn("background: #111721", css)
@@ -982,10 +1005,9 @@ class FreightQuoteTests(unittest.TestCase):
             "service_level",
             "price_usd",
             "transit_days",
-            "bookable",
             "quote_id",
-            "option_id",
             "is_warp",
+            "request_token",
         ):
             self.assertIn(field, javascript)
         for fake_carrier in ("FedEx", "XPO", "Estes"):

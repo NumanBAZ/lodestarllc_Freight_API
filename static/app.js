@@ -41,10 +41,17 @@ function compact(object) {
   }));
 }
 
+function localDateValue(date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
 function futureDate(days = 1) {
   const date = new Date();
   date.setDate(date.getDate() + days);
-  return date.toISOString().slice(0, 10);
+  return localDateValue(date);
 }
 
 function selectedAction() {
@@ -557,7 +564,7 @@ document.addEventListener("click", (event) => {
 const servicesLink = $('a[href="#services"]');
 servicesLink?.addEventListener("click", () => { $("#services").open = true; });
 
-$("#pickupDate").min = new Date().toISOString().slice(0, 10);
+$("#pickupDate").min = localDateValue(new Date());
 $("#pickupDate").value = futureDate();
 $("#year").textContent = new Date().getFullYear();
 if (DEBUG_MODE) $("#debugPanel").hidden = false;

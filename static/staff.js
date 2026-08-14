@@ -56,10 +56,17 @@ function transitText(value) {
   return Number.isFinite(number) ? `${number} business ${number === 1 ? "day" : "days"}` : String(value);
 }
 
+function localDateValue(date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
 function futureDate() {
   const value = new Date();
   value.setDate(value.getDate() + 1);
-  return value.toISOString().slice(0, 10);
+  return localDateValue(value);
 }
 
 function renderAuthState(authState, session = {}) {
@@ -137,13 +144,9 @@ function dateTimeText(value) {
   return new Intl.DateTimeFormat("en-US", { dateStyle: "medium", timeStyle: "short" }).format(parsed);
 }
 
-function customerEmailHref(email, message = "", customerName = "", requestId = "") {
+function customerEmailHref(email) {
   const address = String(email || "").trim();
-  if (!address) return "";
-  if (!message && !requestId) return `mailto:${address}`;
-  const subject = "Lodestar Logistics - Your Freight Quote Request";
-  const body = `Hello ${customerName || "Customer"},\n\nRequest ID: ${requestId}\n\n${message}`;
-  return `mailto:${address}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+  return address ? `mailto:${address}` : "";
 }
 
 function customerPhoneHref(phone) {
@@ -321,24 +324,6 @@ async function updateCustomerRequestStatus(status, rejectReason = "", errorTarge
     showError(errorTarget, error.message);
     return false;
   }
-}
-
-function renderMessageCustomerActions() {
-  const request = staffState.selectedCustomerRequest || {};
-  const customer = request.customer || {};
-  const message = $("#customerMessageText").value.trim();
-  $("#messageCustomerContact").innerHTML = `
-    <strong>${escapeHtml(customer.full_name || "Customer name not provided")}</strong>
-    <span>${escapeHtml(customer.email || "Email not provided")}</span>
-    <span>${escapeHtml(customer.phone || "Phone not provided")}</span>`;
-  const emailLink = $("#openCustomerEmail");
-  const emailHref = customerEmailHref(customer.email, message, customer.full_name, request.id);
-  emailLink.hidden = !emailHref;
-  emailLink.href = emailHref || "#";
-  const callLink = $("#callCustomerFromMessage");
-  const phoneHref = customerPhoneHref(customer.phone);
-  callLink.hidden = !phoneHref;
-  callLink.href = phoneHref || "#";
 }
 
 function quoteCard(option, index) {
@@ -599,13 +584,6 @@ $("#rejectRequestForm").addEventListener("submit", async (event) => {
   button.disabled = false;
   if (updated) $("#rejectRequestDialog").close();
 });
-$("#messageCustomer").addEventListener("click", () => {
-  $("#customerMessageText").value = "";
-  renderMessageCustomerActions();
-  $("#messageCustomerDialog").showModal();
-});
-$("#customerMessageText").addEventListener("input", renderMessageCustomerActions);
-$("#closeMessageCustomer").addEventListener("click", () => $("#messageCustomerDialog").close());
 $("#bookCustomerRequest").addEventListener("click", () => {
   const request = staffState.selectedCustomerRequest;
   if (!request?.booking_quote_token) return;
@@ -620,6 +598,6 @@ $("#bookCustomerRequest").addEventListener("click", () => {
   });
 });
 
-$("#pickupDate").min = new Date().toISOString().slice(0, 10);
+$("#pickupDate").min = localDateValue(new Date());
 $("#pickupDate").value = futureDate();
 restoreSession();

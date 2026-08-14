@@ -4,6 +4,7 @@ import asyncio
 import copy
 import os
 import unittest
+from datetime import date, timedelta
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, patch
@@ -75,6 +76,42 @@ class FakeAsyncClient:
         return FakeWarpResponse()
 
 
+class FakeLocationSearchResponse:
+    is_success = True
+    status_code = 200
+
+    def json(self) -> dict[str, Any]:
+        return {
+            "postalCodes": [
+                {"postalCode": "90012", "placeName": "Los Angeles", "adminCode1": "CA"},
+                {"postalCode": "90013", "placeName": "Los Angeles", "adminCode1": "CA"},
+            ]
+        }
+
+
+class FakeLocationSearchClient:
+    last_params: dict[str, Any] | None = None
+
+    def __init__(self, **_: Any) -> None:
+        pass
+
+    async def __aenter__(self) -> FakeLocationSearchClient:
+        return self
+
+    async def __aexit__(self, *_: Any) -> None:
+        return None
+
+    async def get(
+        self,
+        _: str,
+        *,
+        headers: dict[str, str],
+        params: dict[str, Any],
+    ) -> FakeLocationSearchResponse:
+        type(self).last_params = params
+        return FakeLocationSearchResponse()
+
+
 class FakeBookingResponse:
     is_success = True
     status_code = 200
@@ -142,7 +179,7 @@ class FreightQuoteTests(unittest.TestCase):
             "_environment": "live",
             "origin_zip": "90012",
             "destination_zip": "94105",
-            "pickup_date": "2026-07-27",
+            "pickup_date": (date.today() + timedelta(days=7)).isoformat(),
             "pallets": 2,
             "total_weight_lbs": 1001,
             "length_in": 48,
@@ -668,12 +705,11 @@ class FreightQuoteTests(unittest.TestCase):
         self.assertIn("booking_quote_token", staff_javascript)
         for status in ("all", "new", "approved", "rejected", "booked"):
             self.assertIn(f'data-request-filter="{status}"', staff_html)
-        for action in ("Approve Request", "Reject Request", "Contact Customer", "Message Customer", "Send Email", "Call Customer"):
+        for action in ("Approve Request", "Reject Request", "Contact Customer", "Send Email", "Call Customer"):
             self.assertIn(action, staff_html + staff_javascript)
-        self.assertIn('return `mailto:${address}`', staff_javascript)
+        self.assertNotIn("Message Customer", staff_html + staff_javascript)
+        self.assertIn('address ? `mailto:${address}`', staff_javascript)
         self.assertIn('return number ? `tel:${number}`', staff_javascript)
-        self.assertIn("Lodestar Logistics - Your Freight Quote Request", staff_javascript)
-        self.assertIn("Request ID: ${requestId}", staff_javascript)
         self.assertIn("53' Dry Van (FTL)", public_html)
         self.assertIn("53' Dry Van (FTL)", staff_html)
         self.assertIn("freightTypeLabel(request.freight_type)", staff_javascript)
@@ -691,6 +727,9 @@ class FreightQuoteTests(unittest.TestCase):
             self.assertIn('src="/static/location.js"', html)
             self.assertIn("53' Dry Van (FTL)", html)
         self.assertIn("Select a ZIP option", location_javascript)
+        self.assertIn("Searching locations…", location_javascript)
+        self.assertIn("No matching US locations found.", location_javascript)
+        self.assertIn('event.key === "ArrowDown"', location_javascript)
         self.assertIn("/api/locations/resolve?query=", location_javascript)
         self.assertIn("routeLocationLabel", staff_javascript)
         self.assertIn("locationDetailItem(\"Origin\"", staff_javascript)
@@ -721,7 +760,7 @@ class FreightQuoteTests(unittest.TestCase):
         self.assertEqual(city_response.json()["options"], options)
 
     def test_invalid_location_stops_before_warp(self) -> None:
-        for query in ("1234", "Los Angeles", "Los Angeles, California"):
+        for query in ("L", "L@", "Los Angeles, California"):
             with self.subTest(query=query):
                 lookup = self.client.get(
                     "/api/locations/resolve",
@@ -741,6 +780,50 @@ class FreightQuoteTests(unittest.TestCase):
             response = self.client.post("/api/warp/quote-ftl", json=self.payload)
         self.assertEqual(response.status_code, 400)
         self.assertIsNone(FakeAsyncClient.last_url)
+
+    def test_partial_city_search_uses_backend_only_geonames_username(self) -> None:
+        with (
+            patch.dict(os.environ, {"GEONAMES_USERNAME": "lodestar-test"}),
+            patch.object(app_module.httpx, "AsyncClient", FakeLocationSearchClient),
+        ):
+            response = self.client.get(
+                "/api/locations/resolve",
+                params={"query": "Los Ang"},
+            )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["options"][0]["zip"], "90012")
+        self.assertEqual(
+            (FakeLocationSearchClient.last_params or {}).get("placename_startsWith"),
+            "Los Ang",
+        )
+        self.assertEqual(
+            (FakeLocationSearchClient.last_params or {}).get("username"),
+            "lodestar-test",
+        )
+
+    def test_pickup_date_rejects_past_dates_and_uses_styled_date_inputs(self) -> None:
+        FakeAsyncClient.last_url = None
+        response = self.client.post(
+            "/api/warp/quote-ftl",
+            json={**self.payload, "pickup_date": "2020-01-01"},
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIsNone(FakeAsyncClient.last_url)
+        public_html = Path("static/index.html").read_text(encoding="utf-8")
+        staff_html = Path("static/staff.html").read_text(encoding="utf-8")
+        for html in (public_html, staff_html):
+            self.assertIn('id="pickupDate" type="date"', html)
+            self.assertIn("YYYY-MM-DD or use calendar", html)
+
+    def test_staff_ui_exposes_only_ltl_and_dry_van(self) -> None:
+        staff_html = Path("static/staff.html").read_text(encoding="utf-8")
+        self.assertIn('name="mode" value="ltl"', staff_html)
+        self.assertIn('name="mode" value="ftl"', staff_html)
+        self.assertIn("53' Dry Van (FTL)", staff_html)
+        self.assertNotIn('name="mode" value="box-truck"', staff_html)
+        self.assertNotIn('name="mode" value="van"', staff_html)
+        self.assertEqual(app_module.STAFF_QUOTE_PATHS["box-truck"], "/box-truck/quote")
+        self.assertEqual(app_module.STAFF_QUOTE_PATHS["van"], "/van/quote")
 
     def test_resolved_locations_are_stored_but_not_sent_to_warp(self) -> None:
         with patch.object(app_module.httpx, "AsyncClient", FakeAsyncClient):
@@ -838,8 +921,10 @@ class FreightQuoteTests(unittest.TestCase):
     def test_staff_frontend_requires_second_confirmation_and_hides_unbookable_actions(self) -> None:
         html = Path("static/staff.html").read_text(encoding="utf-8")
         javascript = Path("static/staff.js").read_text(encoding="utf-8")
-        for mode in ("ltl", "ftl", "box-truck", "van"):
+        for mode in ("ltl", "ftl"):
             self.assertIn(f'value="{mode}"', html)
+        for mode in ("box-truck", "van"):
+            self.assertNotIn(f'value="{mode}"', html)
         self.assertIn("Book Shipment", javascript)
         self.assertIn("Confirm Booking", html)
         self.assertIn("SECOND CONFIRMATION", html)

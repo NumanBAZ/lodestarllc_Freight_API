@@ -48,6 +48,15 @@
         <p>Bookings require a second confirmation and are submitted only from the Lodestar backend.</p>
       </div>
 
+      <section class="panel customer-requests-panel">
+        <div class="customer-requests-heading">
+          <div><p class="eyebrow">CUSTOMER INTAKE</p><h2>Customer Quote Requests</h2></div>
+          <button id="refreshCustomerRequests" class="button button-quiet" type="button">Refresh</button>
+        </div>
+        <p id="customerRequestsMessage" class="requests-message">Loading customer quote requests…</p>
+        <div id="customerRequestsList" class="customer-requests-list" hidden></div>
+      </section>
+
       <form id="staffQuoteForm" class="panel quote-form">
         <fieldset class="mode-picker">
           <legend>Freight Mode</legend>
@@ -87,6 +96,17 @@
       <section id="staffResults" class="results" aria-live="polite" hidden></section>
     </section>
   </main>
+
+  <dialog id="requestDetailDialog" class="booking-dialog request-detail-dialog">
+    <div class="booking-form">
+      <div class="dialog-heading">
+        <div><p class="eyebrow">CUSTOMER QUOTE REQUEST</p><h2>Request Details</h2></div>
+        <button id="closeRequestDetail" class="dialog-close" type="button" aria-label="Close">×</button>
+      </div>
+      <div id="customerRequestDetail" class="request-detail-content"></div>
+      <button id="bookCustomerRequest" class="button button-primary" type="button" hidden>Book Shipment</button>
+    </div>
+  </dialog>
 
   <dialog id="bookingDialog" class="booking-dialog">
     <form id="bookingForm" class="booking-form">

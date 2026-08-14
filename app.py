@@ -11,7 +11,7 @@ import os
 import re
 import secrets
 import time
-from datetime import date
+from datetime import date, datetime, timezone
 from typing import Any
 
 import httpx
@@ -27,6 +27,9 @@ WARP_ENV = os.getenv("WARP_ENV", "sandbox").strip().lower()
 STAFF_COOKIE_NAME = "lodestar_staff_session"
 STAFF_SESSION_SECONDS = 8 * 60 * 60
 STAFF_QUOTE_TOKEN_SECONDS = 2 * 60 * 60
+PUBLIC_QUOTE_TOKEN_SECONDS = 2 * 60 * 60
+QUOTE_REQUEST_INDEX_KEY = "lodestar:quote-requests"
+QUOTE_REQUEST_KEY_PREFIX = "lodestar:quote-request:"
 
 STAFF_QUOTE_PATHS = {
     "ltl": "/ltl/market-options",
@@ -114,8 +117,7 @@ def staff_booking_enabled() -> bool:
     return os.getenv("STAFF_BOOKING_ENABLED", "false").strip().lower() == "true"
 
 
-def encode_signed_payload(payload: dict[str, Any]) -> str:
-    _, _, secret = staff_configuration()
+def encode_payload_with_secret(payload: dict[str, Any], secret: str) -> str:
     encoded = base64.urlsafe_b64encode(
         json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
     ).decode("ascii").rstrip("=")
@@ -124,10 +126,9 @@ def encode_signed_payload(payload: dict[str, Any]) -> str:
     return f"{encoded}.{encoded_signature}"
 
 
-def decode_signed_payload(token: str, purpose: str) -> dict[str, Any]:
+def decode_payload_with_secret(token: str, purpose: str, secret: str) -> dict[str, Any]:
     try:
         encoded, encoded_signature = token.split(".", 1)
-        _, _, secret = staff_configuration()
         expected = hmac.new(
             secret.encode("utf-8"), encoded.encode("ascii"), hashlib.sha256
         ).digest()
@@ -142,6 +143,36 @@ def decode_signed_payload(token: str, purpose: str) -> dict[str, Any]:
         return payload
     except (TypeError, ValueError, KeyError, UnicodeDecodeError, binascii.Error) as exc:
         raise HTTPException(status_code=401, detail="Staff session is invalid or expired") from exc
+
+
+def encode_signed_payload(payload: dict[str, Any]) -> str:
+    _, _, secret = staff_configuration()
+    return encode_payload_with_secret(payload, secret)
+
+
+def decode_signed_payload(token: str, purpose: str) -> dict[str, Any]:
+    _, _, secret = staff_configuration()
+    return decode_payload_with_secret(token, purpose, secret)
+
+
+def quote_request_signing_secret() -> str:
+    secret = os.getenv("QUOTE_REQUEST_SIGNING_SECRET", "")
+    if len(secret) < 32:
+        raise HTTPException(status_code=503, detail="Quote request signing is not configured")
+    return secret
+
+
+def encode_public_quote_payload(payload: dict[str, Any]) -> str:
+    return encode_payload_with_secret(payload, quote_request_signing_secret())
+
+
+def decode_public_quote_payload(token: str) -> dict[str, Any]:
+    try:
+        return decode_payload_with_secret(token, "public-quote", quote_request_signing_secret())
+    except HTTPException as exc:
+        if exc.status_code == 503:
+            raise
+        raise HTTPException(status_code=400, detail="The selected quote is invalid or expired") from exc
 
 
 def require_staff(request: Request) -> dict[str, Any]:
@@ -299,11 +330,189 @@ async def post_to_warp(
     return response, data
 
 
+def upstash_configuration() -> tuple[str, str]:
+    url = os.getenv("UPSTASH_REDIS_REST_URL", "").rstrip("/")
+    token = os.getenv("UPSTASH_REDIS_REST_TOKEN", "")
+    if not url or not token:
+        raise HTTPException(status_code=503, detail="Quote request storage is not configured")
+    return url, token
+
+
+async def upstash_command(command: list[Any]) -> Any:
+    url, token = upstash_configuration()
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(10.0, connect=5.0)) as client:
+            response = await client.post(
+                url,
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "Content-Type": "application/json",
+                },
+                json=command,
+            )
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=503, detail="Quote request storage is unavailable") from exc
+    if not response.is_success:
+        raise HTTPException(status_code=503, detail="Quote request storage is unavailable")
+    payload = response.json()
+    if not isinstance(payload, dict) or payload.get("error"):
+        raise HTTPException(status_code=503, detail="Quote request storage is unavailable")
+    return payload.get("result")
+
+
+async def upstash_pipeline(commands: list[list[Any]]) -> list[Any]:
+    url, token = upstash_configuration()
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(10.0, connect=5.0)) as client:
+            response = await client.post(
+                f"{url}/pipeline",
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "Content-Type": "application/json",
+                },
+                json=commands,
+            )
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=503, detail="Quote request storage is unavailable") from exc
+    if not response.is_success:
+        raise HTTPException(status_code=503, detail="Quote request storage is unavailable")
+    payload = response.json()
+    if not isinstance(payload, list) or any(
+        not isinstance(item, dict) or item.get("error") for item in payload
+    ):
+        raise HTTPException(status_code=503, detail="Quote request storage is unavailable")
+    return [item.get("result") for item in payload]
+
+
+def quote_request_key(request_id: str) -> str:
+    return f"{QUOTE_REQUEST_KEY_PREFIX}{request_id}"
+
+
+async def save_quote_request(record: dict[str, Any]) -> None:
+    serialized = json.dumps(record, separators=(",", ":"), sort_keys=True)
+    created_score = int(datetime.fromisoformat(record["created_at"]).timestamp() * 1000)
+    results = await upstash_pipeline(
+        [
+            ["SET", quote_request_key(record["id"]), serialized],
+            ["ZADD", QUOTE_REQUEST_INDEX_KEY, created_score, record["id"]],
+        ]
+    )
+    if results != ["OK", 1]:
+        existing = await get_quote_request(record["id"])
+        if existing is None:
+            raise HTTPException(status_code=503, detail="Quote request could not be saved")
+
+
+async def get_quote_request(request_id: str) -> dict[str, Any] | None:
+    if not re.fullmatch(r"qr_[A-Za-z0-9_-]{16,64}", request_id):
+        return None
+    serialized = await upstash_command(["GET", quote_request_key(request_id)])
+    if serialized is None:
+        return None
+    try:
+        value = json.loads(serialized)
+    except (TypeError, json.JSONDecodeError) as exc:
+        raise HTTPException(status_code=503, detail="Quote request storage returned invalid data") from exc
+    return value if isinstance(value, dict) else None
+
+
+async def list_quote_requests(limit: int = 100) -> list[dict[str, Any]]:
+    request_ids = await upstash_command(
+        ["ZREVRANGE", QUOTE_REQUEST_INDEX_KEY, 0, max(0, min(limit, 100) - 1)]
+    )
+    if not isinstance(request_ids, list) or not request_ids:
+        return []
+    serialized_records = await upstash_command(
+        ["MGET", *[quote_request_key(str(request_id)) for request_id in request_ids]]
+    )
+    if not isinstance(serialized_records, list):
+        raise HTTPException(status_code=503, detail="Quote request storage returned invalid data")
+    records: list[dict[str, Any]] = []
+    for serialized in serialized_records:
+        if not serialized:
+            continue
+        try:
+            record = json.loads(serialized)
+        except (TypeError, json.JSONDecodeError):
+            continue
+        if isinstance(record, dict):
+            records.append(record)
+    return records
+
+
+async def update_quote_request(record: dict[str, Any]) -> None:
+    serialized = json.dumps(record, separators=(",", ":"), sort_keys=True)
+    result = await upstash_command(["SET", quote_request_key(record["id"]), serialized])
+    if result != "OK":
+        raise HTTPException(status_code=503, detail="Quote request could not be updated")
+
+
+def public_quote_snapshot(
+    action: str,
+    option: dict[str, Any],
+    shipment: dict[str, Any],
+) -> dict[str, Any]:
+    pickup_services = shipment.get("pickup_services") or (
+        shipment.get("accessorials") or {}
+    ).get("pickup") or []
+    delivery_services = shipment.get("delivery_services") or (
+        shipment.get("accessorials") or {}
+    ).get("delivery") or []
+    return {
+        "freight_type": "LTL" if action == "quote-ltl-market" else "FTL",
+        "shipment": {
+            "origin_zip": shipment.get("origin_zip"),
+            "destination_zip": shipment.get("destination_zip"),
+            "pickup_date": shipment.get("pickup_date"),
+            "pallets": shipment.get("pallets"),
+            "total_weight_lbs": shipment.get("total_weight_lbs"),
+            "weight_lbs_per_pallet": shipment.get("weight_lbs_per_pallet"),
+            "length_in": shipment.get("length_in"),
+            "width_in": shipment.get("width_in"),
+            "height_in": shipment.get("height_in"),
+            "freight_class": shipment.get("freight_class"),
+            "commodity": shipment.get("commodity") or "",
+            "accessorials": {
+                "pickup": pickup_services,
+                "delivery": delivery_services,
+            },
+        },
+        "selected_quote": {
+            "carrier_name": option.get("carrier_name") or "Lodestar Logistics",
+            "price_usd": option.get("price_usd"),
+            "service_level": option.get("service_level") or option.get("mode"),
+            "transit_days": option.get("transit_days"),
+            "quote_id": option.get("quote_id"),
+            "option_id": option.get("option_id"),
+            "expires_at": option.get("expires_at")
+            or option.get("quote_expiration")
+            or option.get("expiration"),
+            "bookable": bool(option.get("quote_id"))
+            and (action != "quote-ltl-market" or option.get("bookable") is True),
+        },
+    }
+
+
+def public_quote_request_token(
+    action: str,
+    option: dict[str, Any],
+    shipment: dict[str, Any],
+) -> str:
+    return encode_public_quote_payload(
+        {
+            "purpose": "public-quote",
+            "quote": public_quote_snapshot(action, option, shipment),
+            "expires_at": int(time.time()) + PUBLIC_QUOTE_TOKEN_SECONDS,
+        }
+    )
+
+
 def quote_token(
     session: dict[str, Any],
     option: dict[str, Any],
     mode: str,
     quote_body: dict[str, Any],
+    request_id: str | None = None,
 ) -> str:
     protected_quote = {
         "mode": mode,
@@ -339,6 +548,8 @@ def quote_token(
             if quote_body.get(field) not in (None, "")
         },
     }
+    if request_id:
+        protected_quote["customer_request_id"] = request_id
     return encode_signed_payload(
         {
             "purpose": "staff-quote",
@@ -432,6 +643,50 @@ async def public_config() -> dict[str, str]:
     }
 
 
+@app.post("/api/quote-requests", status_code=201)
+async def create_quote_request(
+    body: dict[str, Any] = Body(default_factory=dict),
+) -> dict[str, Any]:
+    full_name = clean_text(body.get("full_name"), maximum=120)
+    email = clean_text(body.get("email"), maximum=200).lower()
+    phone = clean_text(body.get("phone"), maximum=40)
+    if not full_name:
+        raise HTTPException(status_code=400, detail="Full Name is required")
+    if not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", email):
+        raise HTTPException(status_code=400, detail="Enter a valid email address")
+    phone_digits = re.sub(r"\D", "", phone)
+    if len(phone_digits) < 7 or len(phone_digits) > 15:
+        raise HTTPException(status_code=400, detail="Enter a valid phone number")
+
+    public_quote = decode_public_quote_payload(
+        clean_text(body.get("request_token"), maximum=16000)
+    ).get("quote")
+    if not isinstance(public_quote, dict):
+        raise HTTPException(status_code=400, detail="The selected quote is invalid or expired")
+    shipment = public_quote.get("shipment")
+    selected_quote = public_quote.get("selected_quote")
+    if not isinstance(shipment, dict) or not isinstance(selected_quote, dict):
+        raise HTTPException(status_code=400, detail="The selected quote is invalid or expired")
+
+    request_id = f"qr_{secrets.token_urlsafe(18)}"
+    record = {
+        "id": request_id,
+        "customer": {
+            "full_name": full_name,
+            "email": email,
+            "phone": phone,
+        },
+        "freight_type": public_quote.get("freight_type"),
+        "shipment": shipment,
+        "selected_quote": selected_quote,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "status": "new",
+        "shipment_id": None,
+    }
+    await save_quote_request(record)
+    return {"ok": True, "request_id": request_id, "status": "new"}
+
+
 @app.post("/api/warp/{action}")
 async def call_warp(
     action: str,
@@ -446,9 +701,12 @@ async def call_warp(
     # It can only be changed through the backend WARP_ENV setting.
     body.pop("_environment", None)
     key = api_key_for_configured_environment()
+    quote_context: dict[str, Any] | None = None
 
     if action in {"quote-ltl-market", "quote-ftl"}:
+        total_weight_lbs = body.get("total_weight_lbs")
         body = normalize_quote_body(body)
+        quote_context = {**body, "total_weight_lbs": total_weight_lbs}
 
     if action == "quote-ltl-market":
         # Only the documented market-options fields are sent to WARP. Service
@@ -500,6 +758,24 @@ async def call_warp(
         if isinstance(market_options, list):
             data["market_options"] = sorted(market_options, key=market_price)
 
+    request_signing_ready = len(os.getenv("QUOTE_REQUEST_SIGNING_SECRET", "")) >= 32
+    if (
+        response.is_success
+        and quote_context is not None
+        and isinstance(data, dict)
+        and request_signing_ready
+    ):
+        if action == "quote-ltl-market":
+            market_options = data.get("market_options")
+            if isinstance(market_options, list):
+                for option in market_options:
+                    if isinstance(option, dict):
+                        option["request_token"] = public_quote_request_token(
+                            action, option, quote_context
+                        )
+        elif action == "quote-ftl":
+            data["request_token"] = public_quote_request_token(action, data, quote_context)
+
     return {
         "ok": response.is_success,
         "status_code": response.status_code,
@@ -550,6 +826,63 @@ async def staff_session(request: Request, response: Response) -> dict[str, Any]:
         "csrf_token": session["csrf"],
         "booking_enabled": staff_booking_enabled(),
     }
+
+
+@app.get("/api/staff/quote-requests")
+async def staff_quote_requests(request: Request) -> dict[str, Any]:
+    session = require_staff(request)
+    require_csrf(request, session)
+    records = await list_quote_requests()
+    return {
+        "requests": [
+            {
+                "id": record.get("id"),
+                "customer": (record.get("customer") or {}).get("full_name"),
+                "route": {
+                    "origin": (record.get("shipment") or {}).get("origin_zip"),
+                    "destination": (record.get("shipment") or {}).get("destination_zip"),
+                },
+                "carrier": (record.get("selected_quote") or {}).get("carrier_name"),
+                "price_usd": (record.get("selected_quote") or {}).get("price_usd"),
+                "freight_type": record.get("freight_type"),
+                "created_at": record.get("created_at"),
+                "status": record.get("status"),
+            }
+            for record in records
+        ]
+    }
+
+
+@app.get("/api/staff/quote-requests/{request_id}")
+async def staff_quote_request_detail(request_id: str, request: Request) -> dict[str, Any]:
+    session = require_staff(request)
+    require_csrf(request, session)
+    record = await get_quote_request(request_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="Quote request not found")
+
+    selected_quote = record.get("selected_quote") or {}
+    shipment = record.get("shipment") or {}
+    detail = dict(record)
+    if (
+        record.get("status") == "new"
+        and isinstance(selected_quote, dict)
+        and selected_quote.get("bookable") is True
+        and selected_quote.get("quote_id")
+    ):
+        accessorials = shipment.get("accessorials") or {}
+        detail["booking_quote_token"] = quote_token(
+            session,
+            selected_quote,
+            str(record.get("freight_type") or "ltl").lower(),
+            {
+                **shipment,
+                "pickup_services": accessorials.get("pickup") or [],
+                "delivery_services": accessorials.get("delivery") or [],
+            },
+            request_id=request_id,
+        )
+    return detail
 
 
 @app.post("/api/staff/logout")
@@ -626,6 +959,31 @@ async def staff_book(
     if not isinstance(quote, dict) or quote.get("bookable") is not True or not quote.get("quote_id"):
         raise HTTPException(status_code=400, detail="The selected quote is not bookable")
 
+    customer_request: dict[str, Any] | None = None
+    customer_request_id = quote.get("customer_request_id")
+    if customer_request_id:
+        customer_request = await get_quote_request(str(customer_request_id))
+        if customer_request is None:
+            raise HTTPException(status_code=404, detail="Quote request not found")
+        stored_quote = customer_request.get("selected_quote") or {}
+        if stored_quote.get("quote_id") != quote.get("quote_id"):
+            raise HTTPException(status_code=400, detail="Quote request does not match the selected quote")
+        if customer_request.get("status") == "booked":
+            return {
+                "ok": True,
+                "status_code": 200,
+                "shipment_id": customer_request.get("shipment_id"),
+                "booking_status": "booked",
+                "tracking_number": customer_request.get("tracking_number"),
+                "carrier": stored_quote.get("carrier_name"),
+                "booked_price": customer_request.get("booked_price")
+                or stored_quote.get("price_usd"),
+                "idempotent_replay": True,
+                "customer_request_id": customer_request_id,
+            }
+        if customer_request.get("status") != "new":
+            raise HTTPException(status_code=409, detail="Quote request cannot be booked")
+
     booking_body: dict[str, Any] = {
         "quote_id": quote["quote_id"],
         "patch": {
@@ -691,7 +1049,15 @@ async def staff_book(
             "tracking_dashboard": data.get("tracking_dashboard"),
             "carrier": quote.get("carrier_name"),
             "booked_price": data.get("price_usd") or data.get("booked_price") or quote.get("price_usd"),
+            "customer_request_id": customer_request_id,
         }
+        if customer_request is not None:
+            customer_request["status"] = "booked"
+            customer_request["shipment_id"] = result["shipment_id"]
+            customer_request["tracking_number"] = result["tracking_number"]
+            customer_request["booked_price"] = result["booked_price"]
+            customer_request["booked_at"] = datetime.now(timezone.utc).isoformat()
+            await update_quote_request(customer_request)
         async with BOOKING_LOCK:
             BOOKING_RESULTS[quote_id] = result
         return result

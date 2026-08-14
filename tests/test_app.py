@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import asyncio
+import copy
 import os
 import unittest
 from pathlib import Path
 from typing import Any
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from fastapi.testclient import TestClient
 
@@ -117,6 +119,9 @@ class FreightQuoteTests(unittest.TestCase):
                 "STAFF_SESSION_SECRET": "test-session-secret-that-is-longer-than-32-characters",
                 "STAFF_COOKIE_SECURE": "false",
                 "STAFF_BOOKING_ENABLED": "false",
+                "QUOTE_REQUEST_SIGNING_SECRET": "test-quote-request-secret-longer-than-32-characters",
+                "UPSTASH_REDIS_REST_URL": "https://example.invalid/upstash",
+                "UPSTASH_REDIS_REST_TOKEN": "test-upstash-token",
             },
         )
         self.environment.start()
@@ -227,6 +232,18 @@ class FreightQuoteTests(unittest.TestCase):
             "Bearer sandbox-secret",
         )
         self.assertNotIn("_environment", FakeAsyncClient.last_json or {})
+
+    def test_public_quotes_still_work_when_request_storage_is_not_configured(self) -> None:
+        with (
+            patch.object(app_module.httpx, "AsyncClient", FakeAsyncClient),
+            patch.dict(os.environ, {"QUOTE_REQUEST_SIGNING_SECRET": ""}),
+        ):
+            response = self.client.post("/api/warp/quote-ltl-market", json=self.payload)
+
+        self.assertEqual(response.status_code, 200)
+        options = response.json()["data"]["market_options"]
+        self.assertTrue(options)
+        self.assertNotIn("request_token", options[0])
 
     def test_missing_ltl_market_fields_are_rejected(self) -> None:
         response = self.client.post("/api/warp/quote-ltl-market", json={})
@@ -389,8 +406,154 @@ class FreightQuoteTests(unittest.TestCase):
             "STAFF_USERNAME",
             "STAFF_PASSWORD",
             "STAFF_SESSION_SECRET",
+            "UPSTASH_REDIS_REST_TOKEN",
+            "QUOTE_REQUEST_SIGNING_SECRET",
         ):
             self.assertNotIn(forbidden, staff_bundle)
+
+    def test_customer_request_persists_appears_for_staff_and_books_with_status_update(self) -> None:
+        store: dict[str, dict[str, Any]] = {}
+
+        async def fake_save(record: dict[str, Any]) -> None:
+            store[record["id"]] = copy.deepcopy(record)
+
+        async def fake_get(request_id: str) -> dict[str, Any] | None:
+            value = store.get(request_id)
+            return copy.deepcopy(value) if value else None
+
+        async def fake_list(_: int = 100) -> list[dict[str, Any]]:
+            return [copy.deepcopy(value) for value in store.values()]
+
+        async def fake_update(record: dict[str, Any]) -> None:
+            store[record["id"]] = copy.deepcopy(record)
+
+        request_token = app_module.public_quote_request_token(
+            "quote-ltl-market",
+            {
+                "carrier_name": "Carrier B",
+                "price_usd": 425.80,
+                "transit_days": 2,
+                "service_level": "Standard",
+                "bookable": True,
+                "quote_id": "quote-b",
+                "option_id": "option-b",
+                "expires_at": "2026-08-15T12:00:00Z",
+            },
+            {
+                **self.payload,
+                "weight_lbs_per_pallet": 501,
+                "commodity": "Machine parts",
+            },
+        )
+
+        with (
+            patch.object(app_module, "save_quote_request", side_effect=fake_save),
+            patch.object(app_module, "get_quote_request", side_effect=fake_get),
+            patch.object(app_module, "list_quote_requests", side_effect=fake_list),
+            patch.object(app_module, "update_quote_request", side_effect=fake_update),
+        ):
+            created = self.client.post(
+                "/api/quote-requests",
+                json={
+                    "request_token": request_token,
+                    "full_name": "Alex Customer",
+                    "email": "alex@example.com",
+                    "phone": "+1 213 555 0199",
+                },
+            )
+            self.assertEqual(created.status_code, 201)
+            request_id = created.json()["request_id"]
+            self.assertIn(request_id, store)
+            self.assertEqual(store[request_id]["status"], "new")
+            self.assertEqual(store[request_id]["shipment"]["commodity"], "Machine parts")
+            self.assertEqual(store[request_id]["selected_quote"]["option_id"], "option-b")
+
+            self.client.cookies.clear()
+            self.assertEqual(self.client.get("/api/staff/quote-requests").status_code, 401)
+            self.assertEqual(
+                self.client.get(f"/api/staff/quote-requests/{request_id}").status_code,
+                401,
+            )
+
+            csrf = self.login_staff()
+            headers = {"X-Staff-CSRF": csrf}
+            listed = self.client.get("/api/staff/quote-requests", headers=headers)
+            self.assertEqual(listed.status_code, 200)
+            self.assertEqual(listed.json()["requests"][0]["customer"], "Alex Customer")
+            self.assertEqual(listed.json()["requests"][0]["status"], "new")
+
+            detail = self.client.get(
+                f"/api/staff/quote-requests/{request_id}", headers=headers
+            )
+            self.assertEqual(detail.status_code, 200)
+            self.assertEqual(detail.json()["shipment"]["total_weight_lbs"], 1001)
+            self.assertEqual(detail.json()["selected_quote"]["quote_id"], "quote-b")
+            self.assertTrue(detail.json()["booking_quote_token"])
+
+            with (
+                patch.object(app_module.httpx, "AsyncClient", FakeBookingClient),
+                patch.object(app_module, "WARP_ENV", "sandbox"),
+                patch.dict(
+                    os.environ,
+                    {
+                        "WARP_SANDBOX_KEY": "wak_test_backend_only",
+                        "STAFF_BOOKING_ENABLED": "true",
+                    },
+                ),
+            ):
+                booked = self.client.post(
+                    "/api/staff/book",
+                    json=self.booking_details(detail.json()["booking_quote_token"]),
+                    headers=headers,
+                )
+
+            self.assertEqual(booked.status_code, 200)
+            self.assertTrue(booked.json()["ok"])
+            self.assertEqual(booked.json()["customer_request_id"], request_id)
+            self.assertEqual(store[request_id]["status"], "booked")
+            self.assertEqual(store[request_id]["shipment_id"], "sandbox-shipment-123")
+
+            booked_detail = self.client.get(
+                f"/api/staff/quote-requests/{request_id}", headers=headers
+            )
+            self.assertEqual(booked_detail.json()["status"], "booked")
+            self.assertNotIn("booking_quote_token", booked_detail.json())
+
+    def test_public_quote_request_form_and_staff_request_dashboard_are_present(self) -> None:
+        public_html = Path("static/index.html").read_text(encoding="utf-8")
+        public_javascript = Path("static/app.js").read_text(encoding="utf-8")
+        staff_html = Path("static/staff.html").read_text(encoding="utf-8")
+        staff_javascript = Path("static/staff.js").read_text(encoding="utf-8")
+
+        for field in ("requestFullName", "requestEmail", "requestPhone"):
+            self.assertIn(f'id="{field}"', public_html)
+        self.assertIn("Submit Quote Request", public_html)
+        self.assertIn("This does not book a shipment.", public_html)
+        self.assertIn('fetch("/api/quote-requests"', public_javascript)
+        self.assertIn("request_token: data?.request_token || item?.request_token", public_javascript)
+        self.assertNotIn('fetch("/api/staff/book"', public_javascript)
+
+        self.assertIn("Customer Quote Requests", staff_html)
+        self.assertIn('id="customerRequestsList"', staff_html)
+        self.assertIn('id="requestDetailDialog"', staff_html)
+        self.assertIn('fetch("/api/staff/quote-requests"', staff_javascript)
+        self.assertIn("booking_quote_token", staff_javascript)
+
+    def test_quote_request_store_uses_persistent_upstash_keys(self) -> None:
+        record = {
+            "id": "qr_abcdefghijklmnop",
+            "created_at": "2026-08-13T10:00:00+00:00",
+            "status": "new",
+        }
+        pipeline = AsyncMock(return_value=["OK", 1])
+        with patch.object(app_module, "upstash_pipeline", pipeline):
+            asyncio.run(app_module.save_quote_request(record))
+
+        commands = pipeline.await_args.args[0]
+        self.assertEqual(commands[0][0], "SET")
+        self.assertEqual(commands[0][1], "lodestar:quote-request:qr_abcdefghijklmnop")
+        self.assertEqual(commands[1][0], "ZADD")
+        self.assertEqual(commands[1][1], "lodestar:quote-requests")
 
     def test_staff_frontend_requires_second_confirmation_and_hides_unbookable_actions(self) -> None:
         html = Path("static/staff.html").read_text(encoding="utf-8")

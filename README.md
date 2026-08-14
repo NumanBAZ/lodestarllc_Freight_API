@@ -86,8 +86,18 @@ STAFF_PASSWORD
 STAFF_SESSION_SECRET
 STAFF_COOKIE_SECURE
 STAFF_BOOKING_ENABLED
+UPSTASH_REDIS_REST_URL
+UPSTASH_REDIS_REST_TOKEN
+QUOTE_REQUEST_SIGNING_SECRET
 ```
 
 Set `STAFF_COOKIE_SECURE=true`. Keep `STAFF_BOOKING_ENABLED=false` until live
 booking is intentionally approved. When disabled, staff can quote and review a
 bookable offer, but both the confirmation UI and backend prevent `POST /book`.
+
+Customer quote requests are stored in Upstash Redis through its HTTPS REST API;
+no Vercel filesystem storage is used. Install an Upstash Redis integration from
+the Vercel Marketplace and connect it to this project so the two `UPSTASH_*`
+variables are injected. Set `QUOTE_REQUEST_SIGNING_SECRET` to a separate random
+secret of at least 32 characters. The Redis token and signing secret are
+backend-only and must never use a `NEXT_PUBLIC_` or other client-exposed prefix.

@@ -267,6 +267,19 @@ main { padding: 20px 0 64px; }
 .summary-grid div { display: grid; gap: 3px; padding: 11px 13px; background: var(--card); }
 .summary-grid span { color: var(--muted); font-size: 12px; }
 .summary-grid strong { overflow-wrap: anywhere; font-size: 14px; }
+.quote-request-form { display:grid; gap:14px; margin-top:18px; padding:16px; border:1px solid var(--line); border-radius:10px; background:var(--card); }
+.quote-request-heading { display:grid; gap:4px; }
+.quote-request-heading strong { color:var(--white); font-size:16px; }
+.quote-request-heading span { color:var(--muted); font-size:12px; line-height:1.5; }
+.quote-request-fields { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; }
+.quote-request-fields label { min-width:0; display:grid; gap:5px; color:#d9dce2; font-size:12px; font-weight:700; }
+.quote-request-fields input { width:100%; min-width:0; height:44px; padding:0 11px; border:1px solid var(--line-strong); border-radius:7px; background:#0d121a; color:var(--white); font:inherit; }
+.quote-request-fields input:focus { outline:none; border-color:var(--yellow); box-shadow:0 0 0 3px rgba(244,184,0,.14); }
+.quote-request-form .primary-button { width:100%; min-width:0; min-height:48px; }
+.quote-request-error { margin:0; color:#ff7c8c; font-size:13px; }
+.quote-request-success { display:grid; gap:5px; margin-top:18px; padding:16px; border:1px solid #287a51; border-radius:10px; background:rgba(40,122,81,.12); }
+.quote-request-success strong { color:#8ce3b5; }
+.quote-request-success span { color:var(--muted); font-size:13px; }
 .dialog-info { margin: 18px 0; padding: 15px; display: grid; grid-template-columns: 34px minmax(0,1fr); gap: 12px; border: 1px solid rgba(96,165,250,.42); border-radius: 10px; background: rgba(37,99,235,.12); }
 .dialog-info-icon { width: 30px; height: 30px; display: grid; place-items: center; border-radius: 50%; background: #2563eb; color: #fff; font-size: 16px; font-weight: 800; font-style: normal; }
 .dialog-info strong { display: block; color: #eff6ff; font-size: 16px; line-height: 1.5; }
@@ -347,6 +360,7 @@ main { padding: 20px 0 64px; }
   .service-group { grid-template-columns: 1fr; }
   .services-accordion summary { grid-template-columns: 31px minmax(0,1fr) 18px; padding-inline: 10px; }
   .summary-grid { grid-template-columns: 1fr; }
+  .quote-request-fields { grid-template-columns:1fr; }
   .quote-dialog { padding: 22px 18px; }
 }
 

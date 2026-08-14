@@ -13,6 +13,9 @@ const loadingStages = [
 const quoteState = {
   marketOptions: [],
   sort: "price",
+  selectedQuote: null,
+  lastAction: "",
+  lastPayload: null,
   contact: { whatsapp: "", phone: "", email: "" }
 };
 
@@ -111,7 +114,8 @@ function buildPayload(action) {
     length_in: numberFrom("#length"),
     width_in: numberFrom("#width"),
     height_in: numberFrom("#height"),
-    freight_class: $("#freightClass").value
+    freight_class: $("#freightClass").value,
+    commodity: $("#commodity").value.trim()
   };
 
   if (action === "quote-ltl-market") {
@@ -125,7 +129,6 @@ function buildPayload(action) {
   return compact({
     ...base,
     accessorials: pickup.length || delivery.length ? { pickup, delivery } : undefined,
-    commodity: $("#commodity").value.trim(),
     hazmat: $("#hazmat").checked || undefined,
     stackable: $("#stackable").checked || undefined
   });
@@ -390,6 +393,7 @@ function renderNetworkResult(data) {
   const services = includedServices(item);
   const quote = {
     ...item,
+    request_token: data?.request_token || item?.request_token,
     carrier_name: "Lodestar Logistics",
     service_level: vehicle,
     price_usd: firstValue(item, ["price_usd", "total_price_usd", "price", "total_price"]),
@@ -454,7 +458,13 @@ function summaryMarkup(quote) {
 
 function openQuoteDialog(quote) {
   if (!quote) return;
+  quoteState.selectedQuote = quote;
   $("#selectedQuoteSummary").innerHTML = summaryMarkup(quote);
+  $("#quoteRequestForm").reset();
+  $("#quoteRequestForm").hidden = false;
+  $("#quoteRequestSuccess").hidden = true;
+  $("#quoteRequestError").hidden = true;
+  $("#quoteRequestError").textContent = "";
   const dialog = $("#quoteDialog");
   if (typeof dialog.showModal === "function") dialog.showModal();
   else dialog.setAttribute("open", "");
@@ -489,16 +499,57 @@ $("#quoteForm").addEventListener("submit", async (event) => {
   if (!validateForm()) return;
   const action = selectedAction();
   if (!action) return;
+  const payload = buildPayload(action);
+  quoteState.lastAction = action;
+  quoteState.lastPayload = payload;
   const button = $("#submitQuote");
   button.disabled = true;
   button.innerHTML = "Finding Current Rates <span aria-hidden=\"true\">…</span>";
-  await fetchQuote(action, buildPayload(action));
+  await fetchQuote(action, payload);
   button.disabled = false;
   button.textContent = "Get My Quote";
 });
 
 $("#quoteResult").addEventListener("click", (event) => {
   if (event.target.closest("[data-retry]")) $("#originZip").focus();
+});
+
+$("#quoteRequestForm").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  if (!form.reportValidity()) return;
+  const requestToken = quoteState.selectedQuote?.request_token;
+  const error = $("#quoteRequestError");
+  if (!requestToken) {
+    error.textContent = "This quote can no longer be submitted. Please request a new quote.";
+    error.hidden = false;
+    return;
+  }
+  const button = $("#submitQuoteRequest");
+  button.disabled = true;
+  button.textContent = "Submitting…";
+  error.hidden = true;
+  try {
+    const response = await fetch("/api/quote-requests", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        request_token: requestToken,
+        full_name: $("#requestFullName").value.trim(),
+        email: $("#requestEmail").value.trim(),
+        phone: $("#requestPhone").value.trim()
+      })
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(String(result.detail || "Unable to submit this quote request."));
+    form.hidden = true;
+    $("#quoteRequestSuccess").hidden = false;
+  } catch (requestError) {
+    error.textContent = requestError.message;
+    error.hidden = false;
+    button.disabled = false;
+    button.textContent = "Submit Quote Request";
+  }
 });
 
 $(".dialog-close").addEventListener("click", () => $("#quoteDialog").close());

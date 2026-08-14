@@ -9,6 +9,7 @@ const staffState = {
   csrfToken: "",
   bookingEnabled: false,
   selectedQuote: null,
+  selectedCustomerRequest: null,
   lastPayload: null,
   bookingPending: false
 };
@@ -61,7 +62,10 @@ function renderAuthState(authState, session = {}) {
   staffState.username = authenticated ? String(session.username || "") : "";
   staffState.csrfToken = authenticated ? String(session.csrfToken || "") : "";
   staffState.bookingEnabled = authenticated && session.bookingEnabled === true;
-  if (!authenticated) staffState.selectedQuote = null;
+  if (!authenticated) {
+    staffState.selectedQuote = null;
+    staffState.selectedCustomerRequest = null;
+  }
 
   $("#authLoading").hidden = !checking;
   $("#loginView").hidden = checking || authenticated;
@@ -87,6 +91,7 @@ async function restoreSession() {
       csrfToken: result.csrf_token,
       bookingEnabled: result.booking_enabled
     });
+    await loadCustomerRequests();
   } catch {
     renderAuthState("anonymous");
   }
@@ -115,6 +120,105 @@ function buildQuotePayload() {
 
 function shipmentSummary(payload) {
   return `${payload.pallets} pallet${payload.pallets === 1 ? "" : "s"}, ${payload.total_weight_lbs} lb total, ${payload.length_in} × ${payload.width_in} × ${payload.height_in} in, class ${payload.freight_class}`;
+}
+
+function dateTimeText(value) {
+  if (!value) return "Not provided";
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return String(value);
+  return new Intl.DateTimeFormat("en-US", { dateStyle: "medium", timeStyle: "short" }).format(parsed);
+}
+
+function requestRow(request) {
+  return `<button class="customer-request-row" type="button" data-customer-request="${escapeHtml(request.id)}">
+    <span><strong>${escapeHtml(request.customer || "Not provided")}</strong></span>
+    <span>${escapeHtml(`${request.route?.origin || "—"} → ${request.route?.destination || "—"}`)}</span>
+    <span>${escapeHtml(request.carrier || "Not provided")}</span>
+    <span>${escapeHtml(formatPrice(request.price_usd))}</span>
+    <span>${escapeHtml(request.freight_type || "—")}</span>
+    <span>${escapeHtml(dateTimeText(request.created_at))}</span>
+    <span class="request-status ${request.status === "booked" ? "is-booked" : ""}">${escapeHtml(request.status || "new")}</span>
+  </button>`;
+}
+
+async function loadCustomerRequests() {
+  if (staffState.authState !== "authenticated") return;
+  const message = $("#customerRequestsMessage");
+  const list = $("#customerRequestsList");
+  message.hidden = false;
+  message.textContent = "Loading customer quote requests…";
+  list.hidden = true;
+  try {
+    const response = await fetch("/api/staff/quote-requests", {
+      headers: { "X-Staff-CSRF": staffState.csrfToken },
+      cache: "no-store"
+    });
+    const result = await response.json().catch(() => ({}));
+    if (response.status === 401) {
+      renderAuthState("anonymous");
+      showError($("#loginError"), "Your staff session expired. Sign in again.");
+      return;
+    }
+    if (!response.ok) throw new Error(errorMessage(result, "Unable to load customer quote requests."));
+    const requests = Array.isArray(result.requests) ? result.requests : [];
+    if (!requests.length) {
+      message.textContent = "No customer quote requests yet.";
+      return;
+    }
+    list.innerHTML = requests.map(requestRow).join("");
+    list.hidden = false;
+    message.hidden = true;
+    $$('[data-customer-request]', list).forEach((button) => button.addEventListener("click", () => {
+      openCustomerRequestDetail(button.dataset.customerRequest);
+    }));
+  } catch (error) {
+    message.textContent = error.message;
+  }
+}
+
+function detailItem(label, value) {
+  return `<div><span>${escapeHtml(label)}</span><strong>${escapeHtml(value ?? "Not provided")}</strong></div>`;
+}
+
+function requestDetailMarkup(request) {
+  const customer = request.customer || {};
+  const shipment = request.shipment || {};
+  const quote = request.selected_quote || {};
+  const accessorials = shipment.accessorials || {};
+  return `
+    <section class="request-detail-section"><h3>Customer</h3><div class="request-detail-grid">
+      ${detailItem("Full Name", customer.full_name)}${detailItem("Email", customer.email)}${detailItem("Phone", customer.phone)}
+      ${detailItem("Status", request.status)}${detailItem("Created At", dateTimeText(request.created_at))}${detailItem("Shipment ID", request.shipment_id)}
+    </div></section>
+    <section class="request-detail-section"><h3>Shipment</h3><div class="request-detail-grid">
+      ${detailItem("Route", `${shipment.origin_zip || "—"} → ${shipment.destination_zip || "—"}`)}${detailItem("Pickup Date", shipment.pickup_date)}${detailItem("Freight Type", request.freight_type)}
+      ${detailItem("Pallets", shipment.pallets)}${detailItem("Total Weight", shipment.total_weight_lbs ? `${shipment.total_weight_lbs} lb` : null)}${detailItem("Dimensions", `${shipment.length_in || "—"} × ${shipment.width_in || "—"} × ${shipment.height_in || "—"} in`)}
+      ${detailItem("Freight Class", shipment.freight_class)}${detailItem("Commodity", shipment.commodity || "Optional / not provided")}${detailItem("Pickup Services", (accessorials.pickup || []).join(", ") || "None")}
+      ${detailItem("Delivery Services", (accessorials.delivery || []).join(", ") || "None")}
+    </div></section>
+    <section class="request-detail-section"><h3>Selected Quote</h3><div class="request-detail-grid">
+      ${detailItem("Carrier", quote.carrier_name)}${detailItem("Price", formatPrice(quote.price_usd))}${detailItem("Service Level", quote.service_level)}
+      ${detailItem("Transit", transitText(quote.transit_days))}${detailItem("Quote ID", quote.quote_id)}${detailItem("Option ID", quote.option_id)}
+      ${detailItem("Quote Expiration", dateTimeText(quote.expires_at))}${detailItem("Bookable", quote.bookable ? "Yes" : "No")}
+    </div></section>`;
+}
+
+async function openCustomerRequestDetail(requestId) {
+  try {
+    const response = await fetch(`/api/staff/quote-requests/${encodeURIComponent(requestId)}`, {
+      headers: { "X-Staff-CSRF": staffState.csrfToken },
+      cache: "no-store"
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(errorMessage(result, "Unable to load quote request."));
+    staffState.selectedCustomerRequest = result;
+    $("#customerRequestDetail").innerHTML = requestDetailMarkup(result);
+    $("#bookCustomerRequest").hidden = !result.booking_quote_token || result.status !== "new";
+    $("#requestDetailDialog").showModal();
+  } catch (error) {
+    $("#customerRequestsMessage").hidden = false;
+    $("#customerRequestsMessage").textContent = error.message;
+  }
 }
 
 function quoteCard(option, index) {
@@ -164,12 +268,18 @@ function selectedQuoteMarkup(quote) {
 function openBookingDialog(quote) {
   if (!quote.bookable || !quote.quote_token) return;
   staffState.selectedQuote = quote;
+  $("#bookingForm").reset();
   $("#selectedQuoteSummary").innerHTML = selectedQuoteMarkup(quote);
   $("#bookingDisabledNotice").hidden = staffState.bookingEnabled;
   $("#confirmBooking").disabled = !staffState.bookingEnabled;
   $("#confirmBooking").textContent = staffState.bookingEnabled ? "Confirm Booking" : "Booking Disabled";
   $('[data-stop="pickup"] [name="zipCode"]').value = staffState.lastPayload.origin_zip;
   $('[data-stop="delivery"] [name="zipCode"]').value = staffState.lastPayload.destination_zip;
+  if (quote.customer) {
+    $('[data-stop="pickup"] [name="contactName"]').value = quote.customer.full_name || "";
+    $('[data-stop="pickup"] [name="email"]').value = quote.customer.email || "";
+    $('[data-stop="pickup"] [name="phone"]').value = quote.customer.phone || "";
+  }
   showError($("#bookingError"), "");
   $("#bookingDialog").showModal();
 }
@@ -211,6 +321,7 @@ $("#loginForm").addEventListener("submit", async (event) => {
       csrfToken: result.csrf_token,
       bookingEnabled: result.booking_enabled
     });
+    await loadCustomerRequests();
   } catch (error) {
     renderAuthState("anonymous");
     showError($("#loginError"), error.message);
@@ -234,6 +345,8 @@ $("#logoutButton").addEventListener("click", async () => {
     if (!response.ok) throw new Error("Unable to log out. Please try again.");
     $("#staffResults").hidden = true;
     $("#staffResults").innerHTML = "";
+    $("#customerRequestsList").hidden = true;
+    $("#customerRequestsList").innerHTML = "";
     renderAuthState("anonymous");
   } catch (error) {
     renderAuthState("authenticated", currentSession);
@@ -318,6 +431,10 @@ $("#bookingForm").addEventListener("submit", async (event) => {
         <div><dt>Carrier</dt><dd>${escapeHtml(result.carrier || "Not provided")}</dd></div>
         <div><dt>Booked Price</dt><dd>${escapeHtml(formatPrice(result.booked_price))}</dd></div>
       </dl></div>`;
+    if (result.customer_request_id) {
+      $("#requestDetailDialog").close();
+      await loadCustomerRequests();
+    }
   } catch (error) {
     showError($("#bookingError"), error.message);
     staffState.bookingPending = false;
@@ -328,6 +445,22 @@ $("#bookingForm").addEventListener("submit", async (event) => {
 
 $("#closeBooking").addEventListener("click", () => {
   if (!staffState.bookingPending) $("#bookingDialog").close();
+});
+
+$("#refreshCustomerRequests").addEventListener("click", loadCustomerRequests);
+$("#closeRequestDetail").addEventListener("click", () => $("#requestDetailDialog").close());
+$("#bookCustomerRequest").addEventListener("click", () => {
+  const request = staffState.selectedCustomerRequest;
+  if (!request?.booking_quote_token) return;
+  const shipment = request.shipment || {};
+  const selectedQuote = request.selected_quote || {};
+  staffState.lastPayload = shipment;
+  $("#requestDetailDialog").close();
+  openBookingDialog({
+    ...selectedQuote,
+    quote_token: request.booking_quote_token,
+    customer: request.customer
+  });
 });
 
 $("#pickupDate").min = new Date().toISOString().slice(0, 10);

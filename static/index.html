@@ -209,6 +209,23 @@
     <p class="section-kicker">SELECTED QUOTE</p>
     <h2 id="dialogTitle">Quote summary</h2>
     <div id="selectedQuoteSummary" class="summary-grid"></div>
+    <form id="quoteRequestForm" class="quote-request-form">
+      <div class="quote-request-heading">
+        <strong>Send this quote to our logistics team</strong>
+        <span>Enter your contact information. This does not book a shipment.</span>
+      </div>
+      <div class="quote-request-fields">
+        <label>Full Name<input id="requestFullName" autocomplete="name" maxlength="120" required /></label>
+        <label>Email<input id="requestEmail" type="email" autocomplete="email" maxlength="200" required /></label>
+        <label>Phone<input id="requestPhone" type="tel" autocomplete="tel" maxlength="40" required /></label>
+      </div>
+      <p id="quoteRequestError" class="quote-request-error" role="alert" hidden></p>
+      <button id="submitQuoteRequest" class="primary-button" type="submit">Submit Quote Request</button>
+    </form>
+    <div id="quoteRequestSuccess" class="quote-request-success" role="status" hidden>
+      <strong>Quote request submitted.</strong>
+      <span>Our logistics team can now review your selected quote.</span>
+    </div>
     <div class="dialog-info" role="note">
       <span class="dialog-info-icon" aria-hidden="true">i</span>
       <div>

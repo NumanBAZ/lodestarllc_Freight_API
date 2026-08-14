@@ -563,6 +563,14 @@ main { padding-bottom:88px; }
 .network-metrics span { font-size:14px; }
 .network-metrics strong { font-size:16px; }
 .service-chips li { padding:6px 9px; font-size:14px; }
+.ftl-offer { grid-template-columns:minmax(230px,.75fr) minmax(0,1.4fr) 190px; gap:28px; padding:24px; border-color:rgba(255,255,255,.1); border-left:4px solid var(--yellow); box-shadow:0 16px 38px rgba(0,0,0,.18); }
+.ftl-primary { min-width:0; }
+.ftl-primary h3 { margin:3px 0 0; color:var(--white); font-size:26px; line-height:1.2; }
+.ftl-label { margin:0; color:var(--yellow); font-size:12px; font-weight:800; letter-spacing:.1em; }
+.ftl-primary .offer-price { margin:16px 0 0; font-size:34px; }
+.ftl-offer .network-metrics { grid-template-columns:repeat(3,minmax(0,1fr)); }
+.ftl-offer .network-metrics div { gap:5px; }
+.ftl-offer .offer-select { width:190px; margin:0; }
 
 .quote-dialog { width:min(760px,calc(100% - 32px)); max-height:92vh; padding:38px; border-color:rgba(255,255,255,.1); border-top:3px solid var(--yellow); border-radius:18px; }
 .dialog-close { top:18px; right:18px; width:42px; height:42px; font-size:26px; }
@@ -590,6 +598,8 @@ main { padding-bottom:88px; }
   .load-grid { grid-template-columns:repeat(3,minmax(0,1fr)); }
   .load-grid .commodity-field { grid-column:span 2; }
   .offer-grid { grid-template-columns:repeat(2,minmax(0,1fr)); }
+  .ftl-offer { grid-template-columns:1fr; }
+  .ftl-offer .offer-select { width:100%; }
 }
 
 @media (max-width:760px) {
@@ -604,6 +614,8 @@ main { padding-bottom:88px; }
   .rate-estimate { grid-template-columns:1fr; }
   .rate-estimate-price { grid-row:auto; grid-column:1; }
   .rate-estimate p,.rate-estimate small { grid-column:1; }
+  .ftl-offer { padding:22px; }
+  .ftl-offer .network-metrics { grid-template-columns:minmax(0,1fr); gap:14px; }
   .quote-dialog { padding:30px 22px; }
 }
 

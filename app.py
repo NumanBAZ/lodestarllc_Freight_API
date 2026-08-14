@@ -489,6 +489,12 @@ def public_quote_snapshot(
             "transit_days": option.get("transit_days"),
             "quote_id": option.get("quote_id"),
             "option_id": option.get("option_id"),
+            "mode": option.get("mode"),
+            "vehicle_type": option.get("vehicle_type") or option.get("equipment_type"),
+            "pickup_date": option.get("pickup_date") or option.get("pickup_at"),
+            "delivery_date": option.get("delivery_date")
+            or option.get("estimated_delivery_date")
+            or option.get("delivery_at"),
             "expires_at": option.get("expires_at")
             or option.get("quote_expiration")
             or option.get("expiration"),

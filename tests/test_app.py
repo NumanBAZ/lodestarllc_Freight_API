@@ -818,7 +818,9 @@ class FreightQuoteTests(unittest.TestCase):
         self.assertEqual(app_module.ALLOWED_ACTIONS["quote-van"][1], "/van/quote")
 
         javascript = Path("static/app.js").read_text(encoding="utf-8")
-        self.assertIn('carrier_name: "Lodestar Logistics"', javascript)
+        self.assertNotIn('carrier_name: "Lodestar Logistics"', javascript)
+        self.assertIn('public_mode: "ftl"', javascript)
+        self.assertIn('const equipmentLabel = "53\' Dry Van"', javascript)
         self.assertIn('safeCustomerNote(data?.note)', javascript)
 
     def test_health_does_not_disclose_configuration(self) -> None:
@@ -933,6 +935,64 @@ class FreightQuoteTests(unittest.TestCase):
         self.assertNotIn("headerPhone", javascript)
         self.assertIn("Carrier ${options.length === 1 ? \"Option\" : \"Options\"} Available", javascript)
         self.assertIn("grid-template-columns:repeat(3,minmax(0,1fr))", css)
+
+    def test_public_ftl_result_is_customer_friendly_and_preserves_staff_data(self) -> None:
+        javascript = Path("static/app.js").read_text(encoding="utf-8")
+        start = javascript.index("function renderNetworkResult")
+        end = javascript.index("function renderQuoteResult", start)
+        ftl_renderer = javascript[start:end]
+        for visible_copy in (
+            "Your FTL Quote",
+            "53' Dry Van",
+            "Estimated Transit",
+            "Pickup Date",
+            "Delivery Date",
+            "Select Quote",
+        ):
+            self.assertIn(visible_copy, ftl_renderer)
+        for removed_copy in (
+            "<h3>Lodestar Logistics</h3>",
+            "No included services were provided",
+            "Quote Expiration",
+            "<span>Quote ID</span>",
+        ):
+            self.assertNotIn(removed_copy, ftl_renderer)
+
+        token = app_module.public_quote_request_token(
+            "quote-ftl",
+            {
+                "mode": "ftl",
+                "vehicle_type": "dry-van-53",
+                "price_usd": 1875.25,
+                "transit_days": 2,
+                "pickup_date": "2026-08-18",
+                "delivery_date": "2026-08-20",
+                "quote_id": "ftl-quote-123",
+                "quote_expiration": "2026-08-17T18:00:00Z",
+            },
+            self.payload,
+        )
+        save = AsyncMock()
+        with patch.object(app_module, "save_quote_request", save):
+            response = self.client.post(
+                "/api/quote-requests",
+                json={
+                    "request_token": token,
+                    "full_name": "FTL Customer",
+                    "email": "ftl@example.com",
+                    "phone": "+1 213 555 0123",
+                },
+            )
+        self.assertEqual(response.status_code, 201)
+        record = save.await_args.args[0]
+        selected = record["selected_quote"]
+        self.assertEqual(record["freight_type"], "FTL")
+        self.assertEqual(selected["quote_id"], "ftl-quote-123")
+        self.assertEqual(selected["mode"], "ftl")
+        self.assertEqual(selected["vehicle_type"], "dry-van-53")
+        self.assertEqual(selected["pickup_date"], "2026-08-18")
+        self.assertEqual(selected["delivery_date"], "2026-08-20")
+        self.assertEqual(selected["expires_at"], "2026-08-17T18:00:00Z")
 
     def test_customer_copy_uses_lodestar_logistics(self) -> None:
         customer_copy = "".join(

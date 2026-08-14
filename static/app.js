@@ -371,48 +371,39 @@ function humanDate(value) {
   return new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", year: "numeric" }).format(date);
 }
 
-function includedServices(item) {
-  const raw = firstValue(item, ["included_services", "services_included", "services", "accessorials"]);
-  if (Array.isArray(raw)) return raw.map((value) => typeof value === "object" ? value.name || value.label : value).filter(Boolean);
-  if (raw && typeof raw === "object") return Object.entries(raw).filter(([, value]) => Boolean(value)).map(([key]) => key.replaceAll("_", " "));
-  if (typeof raw === "string") return [raw];
-  return [];
-}
-
 function renderNetworkResult(data) {
   const item = firstNetworkResult(data);
-  const vehicle = firstValue(item, ["vehicle_type", "equipment_type", "mode"]) || "Full Truckload";
-  const services = includedServices(item);
-  const quote = {
-    ...item,
-    request_token: data?.request_token || item?.request_token,
-    carrier_name: "Lodestar Logistics",
-    service_level: vehicle,
-    price_usd: firstValue(item, ["price_usd", "total_price_usd", "price", "total_price"]),
-    transit_days: firstValue(item, ["transit_days", "estimated_transit_days"]),
-    quote_id: firstValue(item, ["quote_id", "id"])
-  };
+  const equipmentLabel = "53' Dry Van";
   const pickup = firstValue(item, ["pickup_date", "pickup_at"]) || $("#pickupDate").value;
   const delivery = firstValue(item, ["delivery_date", "estimated_delivery_date", "delivery_at"]);
   const expiration = firstValue(item, ["quote_expiration", "expires_at", "expiration", "valid_until"]);
+  const quote = {
+    ...item,
+    request_token: data?.request_token || item?.request_token,
+    public_mode: "ftl",
+    carrier_name: firstValue(item, ["carrier_name", "carrier", "provider_name"]) || "Carrier to be confirmed",
+    service_level: equipmentLabel,
+    price_usd: firstValue(item, ["price_usd", "total_price_usd", "price", "total_price"]),
+    transit_days: firstValue(item, ["transit_days", "estimated_transit_days"]),
+    quote_id: firstValue(item, ["quote_id", "id"]),
+    pickup_date: pickup,
+    delivery_date: delivery,
+    expires_at: expiration
+  };
 
   $("#quoteResult").innerHTML = `
     <div class="results-toolbar">
-      <div><p class="section-kicker">CURRENT FREIGHT RATE</p><h2>Your FTL Quote</h2><p>Current full-truckload pricing for your shipment.</p></div>
+      <div><p class="section-kicker results-eyebrow">FULL TRUCKLOAD RATE</p><h2>Your FTL Quote</h2></div>
     </div>
-    <article class="network-offer">
-      <div class="network-primary">
-        <div class="carrier-heading"><span class="carrier-avatar" aria-hidden="true">LL</span><div><h3>Lodestar Logistics</h3><small>${escapeHtml(vehicle)}</small></div></div>
+    <article class="network-offer ftl-offer">
+      <div class="ftl-primary">
+        <div><p class="ftl-label">EQUIPMENT</p><h3>${equipmentLabel}</h3></div>
         <div class="offer-price">${escapeHtml(formatPrice(quote.price_usd))}<small>USD</small></div>
-        <ul class="service-chips">${services.length ? services.map((service) => `<li>${escapeHtml(service)}</li>`).join("") : "<li>No included services were provided</li>"}</ul>
       </div>
       <div class="network-metrics">
-        <div><span>Vehicle Type</span><strong>${escapeHtml(vehicle)}</strong></div>
-        <div><span>Transit</span><strong>${escapeHtml(transitText(quote.transit_days))}</strong></div>
-        <div><span>Pickup</span><strong>${escapeHtml(humanDate(pickup))}</strong></div>
-        <div><span>Delivery</span><strong>${escapeHtml(humanDate(delivery))}</strong></div>
-        <div><span>Quote Expiration</span><strong>${escapeHtml(humanDate(expiration))}</strong></div>
-        <div><span>Quote ID</span><strong>${escapeHtml(quote.quote_id || "Not provided")}</strong></div>
+        <div><span>Estimated Transit</span><strong>${escapeHtml(transitText(quote.transit_days))}</strong></div>
+        <div><span>Pickup Date</span><strong>${escapeHtml(humanDate(pickup))}</strong></div>
+        <div><span>Delivery Date</span><strong>${escapeHtml(humanDate(delivery))}</strong></div>
       </div>
       <button id="selectNetwork" class="offer-select" type="button">Select Quote</button>
     </article>`;
@@ -440,6 +431,14 @@ function renderQuoteResult(action, data) {
 }
 
 function summaryMarkup(quote) {
+  if (quote.public_mode === "ftl") {
+    return `
+      <div><span>Equipment</span><strong>${escapeHtml(quote.service_level)}</strong></div>
+      <div><span>Price</span><strong>${escapeHtml(formatPrice(quote.price_usd))} USD</strong></div>
+      <div><span>Estimated Transit</span><strong>${escapeHtml(transitText(quote.transit_days))}</strong></div>
+      <div><span>Pickup Date</span><strong>${escapeHtml(humanDate(quote.pickup_date))}</strong></div>
+      <div><span>Delivery Date</span><strong>${escapeHtml(humanDate(quote.delivery_date))}</strong></div>`;
+  }
   return `
     <div><span>Carrier</span><strong>${escapeHtml(quote.carrier_name || "Lodestar Logistics")}</strong></div>
     <div><span>Price</span><strong>${escapeHtml(formatPrice(quote.price_usd))} USD</strong></div>

@@ -71,14 +71,26 @@
         <fieldset class="mode-picker">
           <legend>Freight Mode</legend>
           <label><input type="radio" name="mode" value="ltl" required /><span>LTL</span></label>
-          <label><input type="radio" name="mode" value="ftl" required /><span>FTL</span></label>
+          <label><input type="radio" name="mode" value="ftl" required /><span>53' Dry Van (FTL)</span></label>
           <label><input type="radio" name="mode" value="box-truck" required /><span>Box Truck</span></label>
           <label><input type="radio" name="mode" value="van" required /><span>Cargo Van</span></label>
         </fieldset>
 
         <div class="form-grid">
-          <label>Origin ZIP<input id="originZip" inputmode="numeric" pattern="[0-9]{5}" maxlength="5" required /></label>
-          <label>Destination ZIP<input id="destinationZip" inputmode="numeric" pattern="[0-9]{5}" maxlength="5" required /></label>
+          <div class="location-field">
+            <label for="originLocation">Origin ZIP or City, State</label>
+            <input id="originLocation" autocomplete="off" maxlength="90" placeholder="90012 or Los Angeles, CA" role="combobox" aria-autocomplete="list" aria-controls="originLocationOptions" aria-expanded="false" required />
+            <input id="originZip" type="hidden" /><input id="originCity" type="hidden" /><input id="originState" type="hidden" />
+            <div id="originLocationOptions" class="location-options" role="listbox" hidden></div>
+            <small id="originLocationError" class="location-error" hidden>Enter a valid origin ZIP or City, State.</small>
+          </div>
+          <div class="location-field">
+            <label for="destinationLocation">Destination ZIP or City, State</label>
+            <input id="destinationLocation" autocomplete="off" maxlength="90" placeholder="90012 or Los Angeles, CA" role="combobox" aria-autocomplete="list" aria-controls="destinationLocationOptions" aria-expanded="false" required />
+            <input id="destinationZip" type="hidden" /><input id="destinationCity" type="hidden" /><input id="destinationState" type="hidden" />
+            <div id="destinationLocationOptions" class="location-options" role="listbox" hidden></div>
+            <small id="destinationLocationError" class="location-error" hidden>Enter a valid destination ZIP or City, State.</small>
+          </div>
           <label>Pickup Date<input id="pickupDate" type="date" required /></label>
           <label>Number of Pallets<input id="pallets" type="number" min="1" step="1" required /></label>
           <label>Total Weight (lb)<input id="totalWeight" type="number" min="1" step="0.01" required /></label>
@@ -188,6 +200,7 @@
     </form>
   </dialog>
 
+  <script src="/static/location.js" defer></script>
   <script src="/static/staff.js" defer></script>
 </body>
 </html>

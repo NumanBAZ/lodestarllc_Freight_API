@@ -13,6 +13,7 @@ import secrets
 import time
 from datetime import date, datetime, timezone
 from typing import Any
+from urllib.parse import quote
 
 import httpx
 from dotenv import load_dotenv
@@ -30,6 +31,15 @@ STAFF_QUOTE_TOKEN_SECONDS = 2 * 60 * 60
 PUBLIC_QUOTE_TOKEN_SECONDS = 2 * 60 * 60
 QUOTE_REQUEST_INDEX_KEY = "lodestar:quote-requests"
 QUOTE_REQUEST_KEY_PREFIX = "lodestar:quote-request:"
+LOCATION_RESOLVER_URL = "https://api.zippopotam.us"
+LOCATION_CACHE_SECONDS = 24 * 60 * 60
+LOCATION_CACHE: dict[str, tuple[float, list[dict[str, str]]]] = {}
+LOCATION_METADATA_FIELDS = (
+    "origin_city",
+    "origin_state",
+    "destination_city",
+    "destination_state",
+)
 QUOTE_REQUEST_STATUSES = {"new", "approved", "rejected", "booked"}
 STAFF_STATUS_TRANSITIONS = {
     "new": {"approved", "rejected"},
@@ -292,6 +302,101 @@ def filtered_ltl_body(body: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def location_query_parts(query: str) -> tuple[str, str, str]:
+    value = str(query or "").strip()
+    if re.fullmatch(r"\d{5}", value):
+        return "zip", value, ""
+    city_state = re.fullmatch(r"([A-Za-z][A-Za-z .'-]{1,80}),\s*([A-Za-z]{2})", value)
+    if city_state:
+        return "city", city_state.group(1).strip(), city_state.group(2).upper()
+    raise HTTPException(
+        status_code=400,
+        detail="Enter a 5-digit US ZIP or City, ST (for example Los Angeles, CA).",
+    )
+
+
+async def resolve_us_locations(query: str) -> list[dict[str, str]]:
+    kind, value, state = location_query_parts(query)
+    cache_key = f"{kind}:{value.lower()}:{state}"
+    cached = LOCATION_CACHE.get(cache_key)
+    if cached and cached[0] > time.monotonic():
+        return [dict(option) for option in cached[1]]
+
+    path = f"/us/{value}" if kind == "zip" else f"/us/{quote(state)}/{quote(value)}"
+    try:
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(10.0, connect=5.0),
+            follow_redirects=True,
+        ) as client:
+            response = await client.get(
+                f"{LOCATION_RESOLVER_URL}{path}",
+                headers={"Accept": "application/json", "User-Agent": "lodestar-logistics/2.1"},
+            )
+    except (httpx.TimeoutException, httpx.HTTPError) as exc:
+        raise HTTPException(status_code=503, detail="Location lookup is temporarily unavailable.") from exc
+
+    if response.status_code == 404:
+        options: list[dict[str, str]] = []
+    elif not response.is_success:
+        raise HTTPException(status_code=503, detail="Location lookup is temporarily unavailable.")
+    else:
+        data = response.json()
+        places = data.get("places") if isinstance(data, dict) else []
+        options = []
+        seen: set[str] = set()
+        for place in places if isinstance(places, list) else []:
+            if not isinstance(place, dict):
+                continue
+            zip_code = str(place.get("post code") or (value if kind == "zip" else "")).strip()
+            city = str(place.get("place name") or "").strip()
+            state_code = str(place.get("state abbreviation") or state).strip().upper()
+            if not re.fullmatch(r"\d{5}", zip_code) or not city or not re.fullmatch(r"[A-Z]{2}", state_code):
+                continue
+            identity = f"{zip_code}:{city.lower()}:{state_code}"
+            if identity in seen:
+                continue
+            seen.add(identity)
+            options.append({"zip": zip_code, "city": city, "state": state_code})
+        options.sort(key=lambda option: option["zip"])
+
+    LOCATION_CACHE[cache_key] = (time.monotonic() + LOCATION_CACHE_SECONDS, options)
+    return [dict(option) for option in options]
+
+
+async def resolve_quote_locations(body: dict[str, Any]) -> dict[str, Any]:
+    origin_options, destination_options = await asyncio.gather(
+        resolve_us_locations(str(body.get("origin_zip") or "")),
+        resolve_us_locations(str(body.get("destination_zip") or "")),
+    )
+    if not origin_options:
+        raise HTTPException(status_code=400, detail="Origin ZIP is not a valid US ZIP code.")
+    if not destination_options:
+        raise HTTPException(status_code=400, detail="Destination ZIP is not a valid US ZIP code.")
+    origin = origin_options[0]
+    destination = destination_options[0]
+    return {
+        **body,
+        "origin_zip": origin["zip"],
+        "origin_city": origin["city"],
+        "origin_state": origin["state"],
+        "destination_zip": destination["zip"],
+        "destination_city": destination["city"],
+        "destination_state": destination["state"],
+    }
+
+
+def without_location_metadata(body: dict[str, Any]) -> dict[str, Any]:
+    return {key: value for key, value in body.items() if key not in LOCATION_METADATA_FIELDS}
+
+
+@app.get("/api/locations/resolve")
+async def resolve_location(query: str = "") -> dict[str, Any]:
+    options = await resolve_us_locations(query)
+    if not options:
+        raise HTTPException(status_code=404, detail="No matching US location was found.")
+    return {"options": options}
+
+
 def warp_headers(*, require_key: bool = False) -> dict[str, str]:
     key = api_key_for_configured_environment()
     if require_key and not key:
@@ -467,7 +572,11 @@ def public_quote_snapshot(
         "freight_type": "LTL" if action == "quote-ltl-market" else "FTL",
         "shipment": {
             "origin_zip": shipment.get("origin_zip"),
+            "origin_city": shipment.get("origin_city"),
+            "origin_state": shipment.get("origin_state"),
             "destination_zip": shipment.get("destination_zip"),
+            "destination_city": shipment.get("destination_city"),
+            "destination_state": shipment.get("destination_state"),
             "pickup_date": shipment.get("pickup_date"),
             "pallets": shipment.get("pallets"),
             "total_weight_lbs": shipment.get("total_weight_lbs"),
@@ -716,8 +825,9 @@ async def call_warp(
 
     if action in {"quote-ltl-market", "quote-ftl"}:
         total_weight_lbs = body.get("total_weight_lbs")
-        body = normalize_quote_body(body)
-        quote_context = {**body, "total_weight_lbs": total_weight_lbs}
+        resolved_body = await resolve_quote_locations(normalize_quote_body(body))
+        quote_context = {**resolved_body, "total_weight_lbs": total_weight_lbs}
+        body = without_location_metadata(resolved_body)
 
     if action == "quote-ltl-market":
         # Only the documented market-options fields are sent to WARP. Service
@@ -852,7 +962,11 @@ async def staff_quote_requests(request: Request) -> dict[str, Any]:
                 "customer": (record.get("customer") or {}).get("full_name"),
                 "route": {
                     "origin": (record.get("shipment") or {}).get("origin_zip"),
+                    "origin_city": (record.get("shipment") or {}).get("origin_city"),
+                    "origin_state": (record.get("shipment") or {}).get("origin_state"),
                     "destination": (record.get("shipment") or {}).get("destination_zip"),
+                    "destination_city": (record.get("shipment") or {}).get("destination_city"),
+                    "destination_state": (record.get("shipment") or {}).get("destination_state"),
                 },
                 "carrier": (record.get("selected_quote") or {}).get("carrier_name"),
                 "price_usd": (record.get("selected_quote") or {}).get("price_usd"),
@@ -954,11 +1068,12 @@ async def staff_quote(
     if not path:
         raise HTTPException(status_code=404, detail="Unknown freight mode")
 
-    normalized = normalize_quote_body(dict(body))
+    normalized = await resolve_quote_locations(normalize_quote_body(dict(body)))
+    outgoing_body = without_location_metadata(normalized)
     if mode == "ltl":
-        outgoing = filtered_ltl_body(normalized)
+        outgoing = filtered_ltl_body(outgoing_body)
     else:
-        outgoing = normalized
+        outgoing = outgoing_body
         pickup_services = outgoing.pop("pickup_services", []) or []
         delivery_services = outgoing.pop("delivery_services", []) or []
         if pickup_services or delivery_services:

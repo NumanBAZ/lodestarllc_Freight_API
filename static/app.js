@@ -19,6 +19,11 @@ const quoteState = {
   contact: { whatsapp: "", phone: "", email: "" }
 };
 
+const quoteLocations = window.LodestarLocationResolver.attach([
+  { inputId: "originLocation", zipId: "originZip", cityId: "originCity", stateId: "originState", optionsId: "originLocationOptions", errorId: "originLocationError", label: "Origin" },
+  { inputId: "destinationLocation", zipId: "destinationZip", cityId: "destinationCity", stateId: "destinationState", optionsId: "destinationLocationOptions", errorId: "destinationLocationError", label: "Destination" }
+]);
+
 function escapeHtml(value) {
   return String(value ?? "")
     .replaceAll("&", "&amp;")
@@ -482,6 +487,7 @@ $$('input[name="quoteType"]').forEach((input) => input.addEventListener("change"
 
 $("#quoteForm").addEventListener("submit", async (event) => {
   event.preventDefault();
+  if (!await quoteLocations.resolveAll()) return;
   if (!validateForm()) return;
   const action = selectedAction();
   if (!action) return;
@@ -497,7 +503,7 @@ $("#quoteForm").addEventListener("submit", async (event) => {
 });
 
 $("#quoteResult").addEventListener("click", (event) => {
-  if (event.target.closest("[data-retry]")) $("#originZip").focus();
+  if (event.target.closest("[data-retry]")) $("#originLocation").focus();
 });
 
 $("#quoteRequestForm").addEventListener("submit", async (event) => {

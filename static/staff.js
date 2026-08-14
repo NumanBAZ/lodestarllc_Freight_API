@@ -16,6 +16,11 @@ const staffState = {
   bookingPending: false
 };
 
+const staffLocations = window.LodestarLocationResolver.attach([
+  { inputId: "originLocation", zipId: "originZip", cityId: "originCity", stateId: "originState", optionsId: "originLocationOptions", errorId: "originLocationError", label: "Origin" },
+  { inputId: "destinationLocation", zipId: "destinationZip", cityId: "destinationCity", stateId: "destinationState", optionsId: "destinationLocationOptions", errorId: "destinationLocationError", label: "Destination" }
+]);
+
 function escapeHtml(value) {
   return String(value ?? "")
     .replaceAll("&", "&amp;")
@@ -150,13 +155,30 @@ function statusClass(status) {
   return ["approved", "rejected", "booked"].includes(status) ? `is-${status}` : "";
 }
 
+function freightTypeLabel(value) {
+  const freightType = String(value || "").trim();
+  return freightType.toLowerCase() === "ftl" ? "53' Dry Van (FTL)" : freightType || "—";
+}
+
+function routeLocationLabel(route, prefix) {
+  const zip = route?.[prefix] || "";
+  const city = route?.[`${prefix}_city`] || "";
+  const state = route?.[`${prefix}_state`] || "";
+  return city && state ? `${city}, ${state}${zip ? ` (${zip})` : ""}` : zip || "—";
+}
+
+function locationDetailItem(label, city, state, zip) {
+  const cityState = city && state ? `${city}, ${state}` : "";
+  return `<div><span>${escapeHtml(label)}</span><strong>${escapeHtml(cityState || zip || "Not provided")}${cityState && zip ? `<small>${escapeHtml(zip)}</small>` : ""}</strong></div>`;
+}
+
 function requestRow(request) {
   return `<button class="customer-request-row" type="button" data-customer-request="${escapeHtml(request.id)}">
     <span><strong>${escapeHtml(request.customer || "Not provided")}</strong></span>
-    <span>${escapeHtml(`${request.route?.origin || "—"} → ${request.route?.destination || "—"}`)}</span>
+    <span>${escapeHtml(`${routeLocationLabel(request.route, "origin")} → ${routeLocationLabel(request.route, "destination")}`)}</span>
     <span>${escapeHtml(request.carrier || "Not provided")}</span>
     <span>${escapeHtml(formatPrice(request.price_usd))}</span>
-    <span>${escapeHtml(request.freight_type || "—")}</span>
+    <span>${escapeHtml(freightTypeLabel(request.freight_type))}</span>
     <span>${escapeHtml(dateTimeText(request.created_at))}</span>
     <span class="request-status ${statusClass(request.status)}">${escapeHtml(request.status || "new")}</span>
   </button>`;
@@ -238,7 +260,7 @@ function requestDetailMarkup(request) {
       ${request.reject_reason ? detailItem("Reject Reason", request.reject_reason) : ""}
     </div>${customerContactActions(customer)}</section>
     <section class="request-detail-section"><h3>Shipment</h3><div class="request-detail-grid">
-      ${detailItem("Route", `${shipment.origin_zip || "—"} → ${shipment.destination_zip || "—"}`)}${detailItem("Pickup Date", shipment.pickup_date)}${detailItem("Freight Type", request.freight_type)}
+      ${locationDetailItem("Origin", shipment.origin_city, shipment.origin_state, shipment.origin_zip)}${locationDetailItem("Destination", shipment.destination_city, shipment.destination_state, shipment.destination_zip)}${detailItem("Pickup Date", shipment.pickup_date)}${detailItem("Freight Type", freightTypeLabel(request.freight_type))}
       ${detailItem("Pallets", shipment.pallets)}${detailItem("Total Weight", shipment.total_weight_lbs ? `${shipment.total_weight_lbs} lb` : null)}${detailItem("Dimensions", `${shipment.length_in || "—"} × ${shipment.width_in || "—"} × ${shipment.height_in || "—"} in`)}
       ${detailItem("Freight Class", shipment.freight_class)}${detailItem("Commodity", shipment.commodity || "Optional / not provided")}${detailItem("Pickup Services", (accessorials.pickup || []).join(", ") || "None")}
       ${detailItem("Delivery Services", (accessorials.delivery || []).join(", ") || "None")}
@@ -455,6 +477,7 @@ $("#logoutButton").addEventListener("click", async () => {
 
 $("#staffQuoteForm").addEventListener("submit", async (event) => {
   event.preventDefault();
+  if (!await staffLocations.resolveAll()) return;
   if (!event.currentTarget.reportValidity()) return;
   showError($("#quoteError"), "");
   const mode = $('input[name="mode"]:checked')?.value;

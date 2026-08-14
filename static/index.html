@@ -47,16 +47,20 @@
             <h3 id="routeTitle">Route</h3>
           </div>
           <div class="route-grid">
-            <label class="form-field">
-              <span>Origin ZIP <i class="required-mark" aria-hidden="true">*</i></span>
-              <input id="originZip" type="text" inputmode="numeric" autocomplete="postal-code" maxlength="5" pattern="[0-9]{5}" placeholder="e.g. 90012" required />
-              <small class="validation-message">Enter a valid 5-digit ZIP code.</small>
-            </label>
-            <label class="form-field">
-              <span>Destination ZIP <i class="required-mark" aria-hidden="true">*</i></span>
-              <input id="destinationZip" type="text" inputmode="numeric" autocomplete="postal-code" maxlength="5" pattern="[0-9]{5}" placeholder="e.g. 94105" required />
-              <small class="validation-message">Enter a valid 5-digit ZIP code.</small>
-            </label>
+            <div class="form-field location-field">
+              <label for="originLocation">Origin ZIP or City, State <i class="required-mark" aria-hidden="true">*</i></label>
+              <input id="originLocation" type="text" autocomplete="off" maxlength="90" placeholder="90012 or Los Angeles, CA" role="combobox" aria-autocomplete="list" aria-controls="originLocationOptions" aria-expanded="false" required />
+              <input id="originZip" type="hidden" /><input id="originCity" type="hidden" /><input id="originState" type="hidden" />
+              <div id="originLocationOptions" class="location-options" role="listbox" hidden></div>
+              <small id="originLocationError" class="validation-message" hidden>Enter a valid origin ZIP or City, State.</small>
+            </div>
+            <div class="form-field location-field">
+              <label for="destinationLocation">Destination ZIP or City, State <i class="required-mark" aria-hidden="true">*</i></label>
+              <input id="destinationLocation" type="text" autocomplete="off" maxlength="90" placeholder="90012 or Los Angeles, CA" role="combobox" aria-autocomplete="list" aria-controls="destinationLocationOptions" aria-expanded="false" required />
+              <input id="destinationZip" type="hidden" /><input id="destinationCity" type="hidden" /><input id="destinationState" type="hidden" />
+              <div id="destinationLocationOptions" class="location-options" role="listbox" hidden></div>
+              <small id="destinationLocationError" class="validation-message" hidden>Enter a valid destination ZIP or City, State.</small>
+            </div>
             <label class="form-field">
               <span>Pickup Date <i class="required-mark" aria-hidden="true">*</i></span>
               <input id="pickupDate" type="date" required />
@@ -80,12 +84,12 @@
               </label>
               <label class="freight-option">
                 <input type="radio" name="quoteType" value="quote-ftl" required />
-                <span class="freight-code">FTL</span>
-                <span><strong>Full Truckload</strong><small>Dedicated trailer capacity</small></span>
+                <span class="freight-code">53'</span>
+                <span><strong>Dry Van (FTL)</strong><small>Dedicated trailer capacity</small></span>
                 <i aria-hidden="true"></i>
               </label>
             </div>
-            <small id="freightTypeError" class="validation-message freight-validation-message">Select LTL or FTL before requesting a quote.</small>
+            <small id="freightTypeError" class="validation-message freight-validation-message">Select LTL or 53' Dry Van (FTL) before requesting a quote.</small>
           </fieldset>
         </section>
 
@@ -242,6 +246,7 @@
     </div>
   </footer>
 
+  <script src="/static/location.js" defer></script>
   <script src="/static/app.js" defer></script>
 </body>
 </html>

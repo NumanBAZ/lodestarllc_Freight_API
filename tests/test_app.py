@@ -128,7 +128,15 @@ class FreightQuoteTests(unittest.TestCase):
         self.addCleanup(self.environment.stop)
         app_module.BOOKING_RESULTS.clear()
         app_module.BOOKINGS_IN_PROGRESS.clear()
+        app_module.LOCATION_CACHE.clear()
         FakeBookingClient.call_count = 0
+        self.location_validation = patch.object(
+            app_module,
+            "resolve_quote_locations",
+            side_effect=self.resolve_test_locations,
+        )
+        self.location_validation.start()
+        self.addCleanup(self.location_validation.stop)
         self.client = TestClient(app_module.app)
         self.payload = {
             "_environment": "live",
@@ -144,6 +152,25 @@ class FreightQuoteTests(unittest.TestCase):
             "pickup_services": [],
             "delivery_services": ["liftgate-delivery"],
             "must_not_be_forwarded": "ignored",
+        }
+
+    async def resolve_test_locations(self, body: dict[str, Any]) -> dict[str, Any]:
+        locations = {
+            "90012": ("Los Angeles", "CA"),
+            "94105": ("San Francisco", "CA"),
+            "10001": ("New York", "NY"),
+            "85001": ("Phoenix", "AZ"),
+            "60601": ("Chicago", "IL"),
+            "33101": ("Miami", "FL"),
+        }
+        origin_city, origin_state = locations.get(str(body.get("origin_zip")), ("Test Origin", "CA"))
+        destination_city, destination_state = locations.get(str(body.get("destination_zip")), ("Test Destination", "CA"))
+        return {
+            **body,
+            "origin_city": origin_city,
+            "origin_state": origin_state,
+            "destination_city": destination_city,
+            "destination_state": destination_state,
         }
 
     def login_staff(self) -> str:
@@ -647,6 +674,135 @@ class FreightQuoteTests(unittest.TestCase):
         self.assertIn('return number ? `tel:${number}`', staff_javascript)
         self.assertIn("Lodestar Logistics - Your Freight Quote Request", staff_javascript)
         self.assertIn("Request ID: ${requestId}", staff_javascript)
+        self.assertIn("53' Dry Van (FTL)", public_html)
+        self.assertIn("53' Dry Van (FTL)", staff_html)
+        self.assertIn("freightTypeLabel(request.freight_type)", staff_javascript)
+
+    def test_public_and_staff_share_location_resolver_ui(self) -> None:
+        public_html = Path("static/index.html").read_text(encoding="utf-8")
+        staff_html = Path("static/staff.html").read_text(encoding="utf-8")
+        location_javascript = Path("static/location.js").read_text(encoding="utf-8")
+        staff_javascript = Path("static/staff.js").read_text(encoding="utf-8")
+
+        for html in (public_html, staff_html):
+            self.assertIn("Origin ZIP or City, State", html)
+            self.assertIn("Destination ZIP or City, State", html)
+            self.assertIn("90012 or Los Angeles, CA", html)
+            self.assertIn('src="/static/location.js"', html)
+            self.assertIn("53' Dry Van (FTL)", html)
+        self.assertIn("Select a ZIP option", location_javascript)
+        self.assertIn("/api/locations/resolve?query=", location_javascript)
+        self.assertIn("routeLocationLabel", staff_javascript)
+        self.assertIn("locationDetailItem(\"Origin\"", staff_javascript)
+
+    def test_location_lookup_returns_zip_options_without_automatic_choice(self) -> None:
+        zip_option = [{"zip": "90012", "city": "Los Angeles", "state": "CA"}]
+        options = [
+            {"zip": "90012", "city": "Los Angeles", "state": "CA"},
+            {"zip": "90013", "city": "Los Angeles", "state": "CA"},
+            {"zip": "90014", "city": "Los Angeles", "state": "CA"},
+        ]
+        with patch.object(
+            app_module,
+            "resolve_us_locations",
+            AsyncMock(side_effect=[zip_option, options]),
+        ):
+            zip_response = self.client.get(
+                "/api/locations/resolve",
+                params={"query": "90012"},
+            )
+            city_response = self.client.get(
+                "/api/locations/resolve",
+                params={"query": "Los Angeles, CA"},
+            )
+        self.assertEqual(zip_response.status_code, 200)
+        self.assertEqual(zip_response.json()["options"], zip_option)
+        self.assertEqual(city_response.status_code, 200)
+        self.assertEqual(city_response.json()["options"], options)
+
+    def test_invalid_location_stops_before_warp(self) -> None:
+        for query in ("1234", "Los Angeles", "Los Angeles, California"):
+            with self.subTest(query=query):
+                lookup = self.client.get(
+                    "/api/locations/resolve",
+                    params={"query": query},
+                )
+                self.assertEqual(lookup.status_code, 400)
+
+        FakeAsyncClient.last_url = None
+        invalid = app_module.HTTPException(
+            status_code=400,
+            detail="Origin ZIP is not a valid US ZIP code.",
+        )
+        with (
+            patch.object(app_module, "resolve_quote_locations", AsyncMock(side_effect=invalid)),
+            patch.object(app_module.httpx, "AsyncClient", FakeAsyncClient),
+        ):
+            response = self.client.post("/api/warp/quote-ftl", json=self.payload)
+        self.assertEqual(response.status_code, 400)
+        self.assertIsNone(FakeAsyncClient.last_url)
+
+    def test_resolved_locations_are_stored_but_not_sent_to_warp(self) -> None:
+        with patch.object(app_module.httpx, "AsyncClient", FakeAsyncClient):
+            response = self.client.post("/api/warp/quote-ftl", json=self.payload)
+        self.assertEqual(response.status_code, 200)
+        outgoing = FakeAsyncClient.last_json or {}
+        self.assertEqual(outgoing["origin_zip"], "90012")
+        self.assertEqual(outgoing["destination_zip"], "94105")
+        for field in app_module.LOCATION_METADATA_FIELDS:
+            self.assertNotIn(field, outgoing)
+
+        request_token = response.json()["data"]["request_token"]
+        shipment = app_module.decode_public_quote_payload(request_token)["quote"]["shipment"]
+        self.assertEqual(
+            {key: shipment[key] for key in (
+                "origin_zip", "origin_city", "origin_state",
+                "destination_zip", "destination_city", "destination_state",
+            )},
+            {
+                "origin_zip": "90012",
+                "origin_city": "Los Angeles",
+                "origin_state": "CA",
+                "destination_zip": "94105",
+                "destination_city": "San Francisco",
+                "destination_state": "CA",
+            },
+        )
+
+    def test_staff_route_display_supports_resolved_and_legacy_requests(self) -> None:
+        csrf = self.login_staff()
+        records = [
+            {
+                "id": "resolved",
+                "customer": {"full_name": "Resolved Customer"},
+                "freight_type": "FTL",
+                "shipment": {
+                    "origin_zip": "90012", "origin_city": "Los Angeles", "origin_state": "CA",
+                    "destination_zip": "94105", "destination_city": "San Francisco", "destination_state": "CA",
+                },
+                "selected_quote": {"price_usd": 1000},
+                "status": "new",
+            },
+            {
+                "id": "legacy",
+                "customer": {"full_name": "Legacy Customer"},
+                "freight_type": "LTL",
+                "shipment": {"origin_zip": "90012", "destination_zip": "94105"},
+                "selected_quote": {"price_usd": 900},
+                "status": "new",
+            },
+        ]
+        with patch.object(app_module, "list_quote_requests", AsyncMock(return_value=records)):
+            response = self.client.get(
+                "/api/staff/quote-requests",
+                headers={"X-Staff-CSRF": csrf},
+            )
+        self.assertEqual(response.status_code, 200)
+        resolved, legacy = response.json()["requests"]
+        self.assertEqual(resolved["route"]["origin_city"], "Los Angeles")
+        self.assertEqual(resolved["route"]["destination_state"], "CA")
+        self.assertEqual(legacy["route"]["origin"], "90012")
+        self.assertIsNone(legacy["route"]["origin_city"])
 
     def test_quote_request_store_uses_persistent_upstash_keys(self) -> None:
         record = {
@@ -837,7 +993,7 @@ class FreightQuoteTests(unittest.TestCase):
         )
         self.assertIn("Get My Quote", html)
         self.assertIn("Less Than Truckload", html)
-        self.assertIn("Full Truckload", html)
+        self.assertIn("Dry Van (FTL)", html)
         self.assertIn('value="quote-ltl-market"', html)
         self.assertIn('value="quote-ftl"', html)
         for forbidden in (
@@ -883,7 +1039,7 @@ class FreightQuoteTests(unittest.TestCase):
         for value in ("quote-ltl-market", "quote-ftl"):
             self.assertIn(f'name="quoteType" value="{value}" required', html)
         self.assertNotIn('value="quote-ltl-market" required checked', html)
-        self.assertIn("Select LTL or FTL before requesting a quote.", html)
+        self.assertIn("Select LTL or 53' Dry Van (FTL) before requesting a quote.", html)
         self.assertIn("function validateFreightType()", javascript)
         self.assertIn('return $(\'input[name="quoteType"]:checked\')?.value || "";', javascript)
         self.assertNotIn('?.value || "quote-ltl-market"', javascript)

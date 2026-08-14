@@ -10,7 +10,10 @@ const source = fs
 const context = {
   Intl,
   URLSearchParams,
-  window: { location: { search: "" } }
+  window: {
+    location: { search: "" },
+    LodestarLocationResolver: { attach: () => ({ resolveAll: async () => true }) }
+  }
 };
 
 vm.createContext(context);

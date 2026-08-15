@@ -12,8 +12,9 @@ import re
 import secrets
 import time
 from datetime import date, datetime, timezone
+from functools import lru_cache
+from pathlib import Path
 from typing import Any
-from urllib.parse import quote
 
 import httpx
 from dotenv import load_dotenv
@@ -31,10 +32,9 @@ STAFF_QUOTE_TOKEN_SECONDS = 2 * 60 * 60
 PUBLIC_QUOTE_TOKEN_SECONDS = 2 * 60 * 60
 QUOTE_REQUEST_INDEX_KEY = "lodestar:quote-requests"
 QUOTE_REQUEST_KEY_PREFIX = "lodestar:quote-request:"
-LOCATION_RESOLVER_URL = "https://api.zippopotam.us"
-GEONAMES_API_URL = "https://secure.geonames.org"
-LOCATION_CACHE_SECONDS = 24 * 60 * 60
-LOCATION_CACHE: dict[str, tuple[float, list[dict[str, str]]]] = {}
+LOCATION_DATA_PATH = Path(__file__).resolve().parent / "data" / "us_zip_codes.json"
+POPULAR_LOCATION_ZIPS = ("90012", "94105", "10001", "33101", "60601", "85001")
+LOCATION_RESULT_LIMIT = 25
 LOCATION_METADATA_FIELDS = (
     "origin_city",
     "origin_state",
@@ -305,149 +305,96 @@ def filtered_ltl_body(body: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def location_query_parts(query: str) -> tuple[str, str, str]:
-    value = str(query or "").strip()
-    if re.fullmatch(r"\d{5}", value):
-        return "zip", value, ""
-    city_state = re.fullmatch(r"([A-Za-z][A-Za-z .'-]{1,80}),\s*([A-Za-z]{2})", value)
-    if city_state:
-        return "city", city_state.group(1).strip(), city_state.group(2).upper()
-    raise HTTPException(
-        status_code=400,
-        detail="Enter a 5-digit US ZIP or City, ST (for example Los Angeles, CA).",
-    )
+def display_city(value: str) -> str:
+    return " ".join(part.capitalize() for part in value.strip().split())
+
+
+@lru_cache(maxsize=1)
+def us_location_records() -> tuple[dict[str, dict[str, str]], tuple[dict[str, str], ...]]:
+    try:
+        raw = json.loads(LOCATION_DATA_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise HTTPException(status_code=503, detail="The local US location dataset is unavailable.") from exc
+
+    by_zip: dict[str, dict[str, str]] = {}
+    records: list[dict[str, str]] = []
+    for zip_code, location in raw.items() if isinstance(raw, dict) else ():
+        city = str(location.get("city") or "").strip() if isinstance(location, dict) else ""
+        state = str(location.get("state") or "").strip().upper() if isinstance(location, dict) else ""
+        if not re.fullmatch(r"\d{5}", str(zip_code)) or not city or not re.fullmatch(r"[A-Z]{2}", state):
+            continue
+        record = {"zip": str(zip_code), "city": display_city(city), "state": state}
+        by_zip[record["zip"]] = record
+        records.append(record)
+    records.sort(key=lambda record: record["zip"])
+    return by_zip, tuple(records)
 
 
 async def resolve_us_locations(query: str) -> list[dict[str, str]]:
-    kind, value, state = location_query_parts(query)
-    cache_key = f"{kind}:{value.lower()}:{state}"
-    cached = LOCATION_CACHE.get(cache_key)
-    if cached and cached[0] > time.monotonic():
-        return [dict(option) for option in cached[1]]
-
-    path = f"/us/{value}" if kind == "zip" else f"/us/{quote(state)}/{quote(value)}"
-    try:
-        async with httpx.AsyncClient(
-            timeout=httpx.Timeout(10.0, connect=5.0),
-            follow_redirects=True,
-        ) as client:
-            response = await client.get(
-                f"{LOCATION_RESOLVER_URL}{path}",
-                headers={"Accept": "application/json", "User-Agent": "lodestar-logistics/2.1"},
-            )
-    except (httpx.TimeoutException, httpx.HTTPError) as exc:
-        raise HTTPException(status_code=503, detail="Location lookup is temporarily unavailable.") from exc
-
-    if response.status_code == 404:
-        options: list[dict[str, str]] = []
-    elif not response.is_success:
-        raise HTTPException(status_code=503, detail="Location lookup is temporarily unavailable.")
-    else:
-        data = response.json()
-        places = data.get("places") if isinstance(data, dict) else []
-        options = []
-        seen: set[str] = set()
-        for place in places if isinstance(places, list) else []:
-            if not isinstance(place, dict):
-                continue
-            zip_code = str(place.get("post code") or (value if kind == "zip" else "")).strip()
-            city = str(place.get("place name") or "").strip()
-            state_code = str(place.get("state abbreviation") or state).strip().upper()
-            if not re.fullmatch(r"\d{5}", zip_code) or not city or not re.fullmatch(r"[A-Z]{2}", state_code):
-                continue
-            identity = f"{zip_code}:{city.lower()}:{state_code}"
-            if identity in seen:
-                continue
-            seen.add(identity)
-            options.append({"zip": zip_code, "city": city, "state": state_code})
-        options.sort(key=lambda option: option["zip"])
-
-    LOCATION_CACHE[cache_key] = (time.monotonic() + LOCATION_CACHE_SECONDS, options)
-    return [dict(option) for option in options]
-
-
-async def search_us_locations(query: str) -> list[dict[str, str]]:
     value = str(query or "").strip()
-    if re.fullmatch(r"\d{5}", value) or re.fullmatch(
-        r"[A-Za-z][A-Za-z .'-]{1,80},\s*[A-Za-z]{2}", value
-    ):
-        return await resolve_us_locations(value)
-    if len(value) < 2 or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9 .,'-]{1,80}", value):
-        raise HTTPException(
-            status_code=400,
-            detail="Type at least 2 characters of a US city, state, or ZIP.",
-        )
+    if not re.fullmatch(r"\d{5}", value):
+        return []
+    record = us_location_records()[0].get(value)
+    return [dict(record)] if record else []
 
-    username = os.getenv("GEONAMES_USERNAME", "").strip()
-    params: dict[str, str | int] = {
-        "country": "US",
-        "maxRows": 20,
-        "username": username,
-    }
-    state = ""
+
+@lru_cache(maxsize=256)
+def search_us_locations(query: str) -> tuple[dict[str, str], ...]:
+    value = " ".join(str(query or "").strip().split())
+    by_zip, records = us_location_records()
+    if not value:
+        return tuple(dict(by_zip[zip_code]) for zip_code in POPULAR_LOCATION_ZIPS if zip_code in by_zip)
+    if len(value) > 80 or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9 .,'-]*", value):
+        raise HTTPException(status_code=400, detail="Enter a US city, state, or ZIP prefix.")
+
     if value.isdigit():
-        params["postalcode_startsWith"] = value
+        if len(value) > 5:
+            return ()
+        ranked_matches = [(0, record) for record in records if record["zip"].startswith(value)]
     else:
-        city, separator, state = value.partition(",")
-        city = city.strip()
-        state = state.strip().upper()
-        if separator and state and not re.fullmatch(r"[A-Z]{1,2}", state):
-            raise HTTPException(status_code=400, detail="Use a 2-letter state code, such as CA.")
-        if len(state) < 2:
-            state = ""
-        params["placename_startsWith"] = city
+        normalized = value.upper().replace(".", "")
+        city_query, separator, state_query = normalized.partition(",")
+        city_query = city_query.strip()
+        state_query = state_query.strip()
+        if separator and (len(state_query) > 2 or not state_query.isalpha()):
+            return ()
 
-    if not username:
-        raise HTTPException(
-            status_code=503,
-            detail="Location autocomplete is not configured.",
+        def text_score(record: dict[str, str]) -> int | None:
+            city = record["city"].upper()
+            if separator:
+                if not city.startswith(city_query) or not record["state"].startswith(state_query):
+                    return None
+                return 0 if city == city_query else (1 if city.startswith(f"{city_query} ") else 2)
+            if city == normalized:
+                return 0
+            if city.startswith(f"{normalized} "):
+                return 1
+            if f"{city} {record['state']}".startswith(normalized):
+                return 2
+            if city.startswith(normalized):
+                return 3
+            return None
+
+        ranked_matches = [
+            (score, record)
+            for record in records
+            if (score := text_score(record)) is not None
+        ]
+        city_counts: dict[tuple[str, str], int] = {}
+        for _, record in ranked_matches:
+            identity = (record["city"], record["state"])
+            city_counts[identity] = city_counts.get(identity, 0) + 1
+        ranked_matches.sort(
+            key=lambda match: (
+                match[0],
+                -city_counts[(match[1]["city"], match[1]["state"])],
+                match[1]["city"],
+                match[1]["state"],
+                match[1]["zip"],
+            )
         )
 
-    cache_key = f"search:{value.lower()}"
-    cached = LOCATION_CACHE.get(cache_key)
-    if cached and cached[0] > time.monotonic():
-        return [dict(option) for option in cached[1]]
-
-    try:
-        async with httpx.AsyncClient(
-            timeout=httpx.Timeout(10.0, connect=5.0),
-            follow_redirects=True,
-        ) as client:
-            response = await client.get(
-                f"{GEONAMES_API_URL}/postalCodeSearchJSON",
-                headers={"Accept": "application/json", "User-Agent": "lodestar-logistics/2.1"},
-                params=params,
-            )
-    except (httpx.TimeoutException, httpx.HTTPError) as exc:
-        raise HTTPException(status_code=503, detail="Location lookup is temporarily unavailable.") from exc
-
-    if not response.is_success:
-        raise HTTPException(status_code=503, detail="Location lookup is temporarily unavailable.")
-    data = response.json()
-    if isinstance(data, dict) and data.get("status"):
-        raise HTTPException(status_code=503, detail="Location lookup is temporarily unavailable.")
-
-    options: list[dict[str, str]] = []
-    seen: set[str] = set()
-    postal_codes = data.get("postalCodes") if isinstance(data, dict) else []
-    for place in postal_codes if isinstance(postal_codes, list) else []:
-        if not isinstance(place, dict):
-            continue
-        zip_code = str(place.get("postalCode") or "").strip()
-        city_name = str(place.get("placeName") or "").strip()
-        state_code = str(place.get("adminCode1") or "").strip().upper()
-        if state and state_code != state:
-            continue
-        if not re.fullmatch(r"\d{5}", zip_code) or not city_name or not re.fullmatch(r"[A-Z]{2}", state_code):
-            continue
-        identity = f"{zip_code}:{city_name.lower()}:{state_code}"
-        if identity in seen:
-            continue
-        seen.add(identity)
-        options.append({"zip": zip_code, "city": city_name, "state": state_code})
-    options.sort(key=lambda option: (option["city"], option["state"], option["zip"]))
-    LOCATION_CACHE[cache_key] = (time.monotonic() + LOCATION_CACHE_SECONDS, options)
-    return [dict(option) for option in options]
+    return tuple(dict(record) for _, record in ranked_matches[:LOCATION_RESULT_LIMIT])
 
 
 async def resolve_quote_locations(body: dict[str, Any]) -> dict[str, Any]:
@@ -476,12 +423,15 @@ def without_location_metadata(body: dict[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in body.items() if key not in LOCATION_METADATA_FIELDS}
 
 
+@app.get("/api/locations/search")
+async def search_locations(q: str = "") -> dict[str, Any]:
+    return {"options": [dict(option) for option in search_us_locations(q)]}
+
+
 @app.get("/api/locations/resolve")
 async def resolve_location(query: str = "") -> dict[str, Any]:
-    options = await search_us_locations(query)
-    if not options:
-        raise HTTPException(status_code=404, detail="No matching US location was found.")
-    return {"options": options}
+    """Backward-compatible local lookup alias for older clients."""
+    return {"options": [dict(option) for option in search_us_locations(query)]}
 
 
 def warp_headers(*, require_key: bool = False) -> dict[str, str]:

@@ -622,8 +622,11 @@ main { padding-bottom:88px; }
 .location-field { position:relative; min-width:0; }
 .location-field > label { color:#e2e5ea; font-size:15px; font-weight:600; }
 .location-options { position:absolute; z-index:30; top:calc(100% - 2px); left:0; right:0; max-height:240px; overflow-y:auto; padding:6px; border:1px solid rgba(244,184,0,.48); border-radius:10px; background:#0b111c; box-shadow:0 18px 38px rgba(0,0,0,.42); }
-.location-options button { width:100%; display:block; padding:11px 12px; border:0; border-radius:7px; color:#f7f7f5; background:transparent; text-align:left; cursor:pointer; font:inherit; font-size:14px; font-weight:650; overflow-wrap:anywhere; }
+.location-options button { width:100%; display:flex; align-items:baseline; justify-content:space-between; gap:12px; padding:11px 12px; border:0; border-radius:7px; color:#f7f7f5; background:transparent; text-align:left; cursor:pointer; font:inherit; font-size:14px; font-weight:650; overflow-wrap:anywhere; }
 .location-options button:hover,.location-options button:focus,.location-options button.is-active { outline:none; color:#0b0d12; background:var(--yellow); }
+.location-option-city { min-width:0; font-weight:750; }
+.location-option-meta { flex:0 0 auto; color:#aeb6c2; font-size:12px; font-weight:700; letter-spacing:.03em; }
+.location-options button:hover .location-option-meta,.location-options button:focus .location-option-meta,.location-options button.is-active .location-option-meta { color:#26220f; }
 .location-status { padding:12px; color:#c7cdd7; font-size:14px; line-height:1.45; }
 .location-status.is-loading::before { content:""; width:13px; height:13px; display:inline-block; margin-right:9px; border:2px solid rgba(244,184,0,.28); border-top-color:var(--yellow); border-radius:50%; vertical-align:-2px; animation:location-spin .75s linear infinite; }
 .location-status.is-empty { color:#ff9cab; }
@@ -631,7 +634,7 @@ main { padding-bottom:88px; }
 .location-field .validation-message[hidden] { display:none; }
 input[type="date"] { color-scheme:dark; appearance:none; -webkit-appearance:none; }
 input[type="date"]::-webkit-calendar-picker-indicator { padding:7px; border-radius:7px; background-color:rgba(244,184,0,.14); cursor:pointer; filter:invert(82%) sepia(93%) saturate(1220%) hue-rotate(355deg) brightness(99%); }
-@media (max-width:760px) { .location-options { max-height:200px; } }
+@media (max-width:760px) { .location-options { max-height:200px; } .location-options button { align-items:flex-start; flex-direction:column; gap:3px; } }
 
 @media (max-width:430px) {
   .quote-card-heading > div > p,.progress-line { display:none; }

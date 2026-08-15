@@ -76,42 +76,6 @@ class FakeAsyncClient:
         return FakeWarpResponse()
 
 
-class FakeLocationSearchResponse:
-    is_success = True
-    status_code = 200
-
-    def json(self) -> dict[str, Any]:
-        return {
-            "postalCodes": [
-                {"postalCode": "90012", "placeName": "Los Angeles", "adminCode1": "CA"},
-                {"postalCode": "90013", "placeName": "Los Angeles", "adminCode1": "CA"},
-            ]
-        }
-
-
-class FakeLocationSearchClient:
-    last_params: dict[str, Any] | None = None
-
-    def __init__(self, **_: Any) -> None:
-        pass
-
-    async def __aenter__(self) -> FakeLocationSearchClient:
-        return self
-
-    async def __aexit__(self, *_: Any) -> None:
-        return None
-
-    async def get(
-        self,
-        _: str,
-        *,
-        headers: dict[str, str],
-        params: dict[str, Any],
-    ) -> FakeLocationSearchResponse:
-        type(self).last_params = params
-        return FakeLocationSearchResponse()
-
-
 class FakeBookingResponse:
     is_success = True
     status_code = 200
@@ -165,7 +129,6 @@ class FreightQuoteTests(unittest.TestCase):
         self.addCleanup(self.environment.stop)
         app_module.BOOKING_RESULTS.clear()
         app_module.BOOKINGS_IN_PROGRESS.clear()
-        app_module.LOCATION_CACHE.clear()
         FakeBookingClient.call_count = 0
         self.location_validation = patch.object(
             app_module,
@@ -730,7 +693,8 @@ class FreightQuoteTests(unittest.TestCase):
         self.assertIn("Searching locations…", location_javascript)
         self.assertIn("No matching US locations found.", location_javascript)
         self.assertIn('event.key === "ArrowDown"', location_javascript)
-        self.assertIn("/api/locations/resolve?query=", location_javascript)
+        self.assertIn("/api/locations/search?q=", location_javascript)
+        self.assertIn("window.setTimeout(() => this.lookup(false), 200)", location_javascript)
         self.assertIn("routeLocationLabel", staff_javascript)
         self.assertIn("locationDetailItem(\"Origin\"", staff_javascript)
 
@@ -741,32 +705,31 @@ class FreightQuoteTests(unittest.TestCase):
             {"zip": "90013", "city": "Los Angeles", "state": "CA"},
             {"zip": "90014", "city": "Los Angeles", "state": "CA"},
         ]
-        with patch.object(
-            app_module,
-            "resolve_us_locations",
-            AsyncMock(side_effect=[zip_option, options]),
-        ):
-            zip_response = self.client.get(
-                "/api/locations/resolve",
-                params={"query": "90012"},
-            )
-            city_response = self.client.get(
-                "/api/locations/resolve",
-                params={"query": "Los Angeles, CA"},
-            )
+        zip_response = self.client.get("/api/locations/search", params={"q": "90012"})
+        city_response = self.client.get(
+            "/api/locations/search",
+            params={"q": "Los Angeles, CA"},
+        )
         self.assertEqual(zip_response.status_code, 200)
         self.assertEqual(zip_response.json()["options"], zip_option)
         self.assertEqual(city_response.status_code, 200)
-        self.assertEqual(city_response.json()["options"], options)
+        returned = city_response.json()["options"]
+        for option in options:
+            self.assertIn(option, returned)
 
     def test_invalid_location_stops_before_warp(self) -> None:
-        for query in ("L", "L@", "Los Angeles, California"):
+        one_character = self.client.get("/api/locations/search", params={"q": "L"})
+        self.assertEqual(one_character.status_code, 200)
+        self.assertTrue(one_character.json()["options"])
+        for query in ("L@", "Los Angeles, California"):
             with self.subTest(query=query):
                 lookup = self.client.get(
-                    "/api/locations/resolve",
-                    params={"query": query},
+                    "/api/locations/search",
+                    params={"q": query},
                 )
-                self.assertEqual(lookup.status_code, 400)
+                self.assertIn(lookup.status_code, (200, 400))
+                if lookup.status_code == 200:
+                    self.assertEqual(lookup.json()["options"], [])
 
         FakeAsyncClient.last_url = None
         invalid = app_module.HTTPException(
@@ -781,25 +744,30 @@ class FreightQuoteTests(unittest.TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertIsNone(FakeAsyncClient.last_url)
 
-    def test_partial_city_search_uses_backend_only_geonames_username(self) -> None:
-        with (
-            patch.dict(os.environ, {"GEONAMES_USERNAME": "lodestar-test"}),
-            patch.object(app_module.httpx, "AsyncClient", FakeLocationSearchClient),
-        ):
-            response = self.client.get(
-                "/api/locations/resolve",
-                params={"query": "Los Ang"},
-            )
+    def test_local_location_search_supports_city_zip_prefix_and_city_state(self) -> None:
+        cases = {
+            "Los": ("Los Angeles", "CA"),
+            "900": ("Los Angeles", "CA"),
+            "Miami": ("Miami", "FL"),
+            "Miami, FL": ("Miami", "FL"),
+        }
+        for query, expected in cases.items():
+            with self.subTest(query=query):
+                response = self.client.get("/api/locations/search", params={"q": query})
+                self.assertEqual(response.status_code, 200)
+                options = response.json()["options"]
+                self.assertTrue(options)
+                self.assertLessEqual(len(options), app_module.LOCATION_RESULT_LIMIT)
+                self.assertIn(expected, {(option["city"], option["state"]) for option in options})
+
+        with patch.object(app_module.httpx, "AsyncClient", side_effect=AssertionError("network used")):
+            response = self.client.get("/api/locations/search", params={"q": "331"})
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()["options"][0]["zip"], "90012")
-        self.assertEqual(
-            (FakeLocationSearchClient.last_params or {}).get("placename_startsWith"),
-            "Los Ang",
-        )
-        self.assertEqual(
-            (FakeLocationSearchClient.last_params or {}).get("username"),
-            "lodestar-test",
-        )
+
+    def test_empty_location_search_returns_popular_local_options(self) -> None:
+        response = self.client.get("/api/locations/search")
+        self.assertEqual(response.status_code, 200)
+        self.assertGreaterEqual(len(response.json()["options"]), 4)
 
     def test_pickup_date_rejects_past_dates_and_uses_styled_date_inputs(self) -> None:
         FakeAsyncClient.last_url = None

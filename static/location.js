@@ -39,14 +39,21 @@
     }
 
     canSearch(query) {
-      return query.length >= 2 && /^[A-Za-z0-9][A-Za-z0-9 .,'-]*$/.test(query);
+      return query.length === 0 || /^[A-Za-z0-9][A-Za-z0-9 .,'-]*$/.test(query);
     }
 
     handleFocus() {
-      if (this.zipInput.value) return;
+      if (this.zipInput.value) {
+        this.renderOptions([{
+          zip: this.zipInput.value,
+          city: this.cityInput.value,
+          state: this.stateInput.value
+        }]);
+        return;
+      }
       const query = this.input.value.trim();
       if (this.canSearch(query)) this.lookup(false);
-      else this.renderStatus("Start typing a city, state, or ZIP.", "is-hint");
+      else this.renderStatus("Enter a city, state, or ZIP.", "is-hint");
     }
 
     handleInput() {
@@ -56,14 +63,11 @@
       this.controller?.abort();
       const query = this.input.value.trim();
       if (!this.canSearch(query)) {
-        this.renderStatus(
-          query ? "Type at least 2 letters or ZIP digits." : "Start typing a city, state, or ZIP.",
-          "is-hint"
-        );
+        this.renderStatus("Enter a city, state, or ZIP.", "is-hint");
         return;
       }
       this.renderStatus("Searching locations…", "is-loading");
-      this.timer = window.setTimeout(() => this.lookup(false), 300);
+      this.timer = window.setTimeout(() => this.lookup(false), 200);
     }
 
     handleKeydown(event) {
@@ -137,7 +141,13 @@
         button.type = "button";
         button.setAttribute("role", "option");
         button.setAttribute("aria-selected", "false");
-        button.textContent = `${option.city}, ${option.state} — ${option.zip}`;
+        const city = document.createElement("span");
+        city.className = "location-option-city";
+        city.textContent = `${option.city},`;
+        const metadata = document.createElement("span");
+        metadata.className = "location-option-meta";
+        metadata.textContent = `${option.state} — ${option.zip}`;
+        button.append(city, metadata);
         button.addEventListener("pointerdown", (event) => event.preventDefault());
         button.addEventListener("click", () => this.select(option));
         this.options.appendChild(button);
@@ -160,7 +170,7 @@
     async lookup(showErrors) {
       const query = this.input.value.trim();
       if (!this.canSearch(query)) {
-        this.renderStatus("Type at least 2 letters or ZIP digits.", "is-hint");
+        this.renderStatus("Enter a city, state, or ZIP.", "is-hint");
         if (showErrors) this.setError(`Enter a valid ${this.label} ZIP or city.`);
         return false;
       }
@@ -169,7 +179,7 @@
       this.controller = new AbortController();
       this.renderStatus("Searching locations…", "is-loading");
       try {
-        const response = await fetch(`/api/locations/resolve?query=${encodeURIComponent(query)}`, {
+        const response = await fetch(`/api/locations/search?q=${encodeURIComponent(query)}`, {
           headers: { Accept: "application/json" },
           signal: this.controller.signal
         });

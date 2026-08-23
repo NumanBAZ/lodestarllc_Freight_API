@@ -45,4 +45,21 @@ assert.deepEqual(
   { average: 200, sampleCount: 3, validQuoteCount: 3 }
 );
 
-console.log("competitiveRateEstimate targeted cases passed");
+const quote = {
+  public_mode: "ltl",
+  quote_id: "quote-123",
+  option_id: "option-456",
+  request_token: "signed-request-token"
+};
+assert.equal(
+  context.quoteIdentity(quote),
+  "ltl|quote-123|option-456|signed-request-token"
+);
+context.__quoteForTest = quote;
+vm.runInContext(
+  'quoteState.submittedRequests.set(quoteIdentity(__quoteForTest), { requestId: "qr_test" })',
+  context
+);
+assert.equal(context.submittedRequestFor(quote).requestId, "qr_test");
+
+console.log("competitive rate and submitted quote state targeted cases passed");

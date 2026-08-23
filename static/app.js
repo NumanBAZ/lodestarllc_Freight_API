@@ -14,6 +14,9 @@ const quoteState = {
   marketOptions: [],
   sort: "price",
   selectedQuote: null,
+  selectedQuoteKey: "",
+  submittedRequests: new Map(),
+  submittingQuoteKeys: new Set(),
   lastAction: "",
   lastPayload: null,
   contact: { whatsapp: "", phone: "", email: "" }
@@ -31,6 +34,20 @@ function escapeHtml(value) {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#039;");
+}
+
+function quoteIdentity(quote) {
+  if (!quote) return "";
+  return [
+    quote.public_mode || quote.mode || "quote",
+    quote.quote_id || "",
+    quote.option_id || "",
+    quote.request_token || ""
+  ].join("|");
+}
+
+function submittedRequestFor(quote) {
+  return quoteState.submittedRequests.get(quoteIdentity(quote)) || null;
 }
 
 function compact(object) {
@@ -148,8 +165,18 @@ function buildPayload(action) {
 
 function showDebug(payload) {
   if (!DEBUG_MODE) return;
+  const hiddenFields = new Set(["quote_id", "option_id", "request_token", "bookable"]);
+  const sanitize = (value) => {
+    if (Array.isArray(value)) return value.map(sanitize);
+    if (!value || typeof value !== "object") return value;
+    return Object.fromEntries(
+      Object.entries(value)
+        .filter(([key]) => !hiddenFields.has(key))
+        .map(([key, item]) => [key, sanitize(item)])
+    );
+  };
   $("#debugPanel").hidden = false;
-  $("#debugOutput").textContent = JSON.stringify(payload, null, 2);
+  $("#debugOutput").textContent = JSON.stringify(sanitize(payload), null, 2);
 }
 
 function renderLoading(isLtl) {
@@ -315,9 +342,13 @@ function optionTags(option, lowestPrice, shortestTransit) {
 function renderCarrierCard(option, index, lowestPrice, shortestTransit) {
   const carrier = String(option.carrier_name || "Carrier unavailable");
   const isBest = numericPrice(option) === lowestPrice;
+  const identity = quoteIdentity(option);
+  const submitted = Boolean(submittedRequestFor(option));
+  const selected = !submitted && identity === quoteState.selectedQuoteKey;
+  const stateClass = submitted ? "is-submitted" : (selected ? "is-selected" : "");
   return `
-    <article class="offer-card ${isBest ? "is-best" : ""}" data-offer-index="${index}" data-network-source="${option.is_warp === true ? "direct" : "carrier"}">
-      <div class="offer-tags">${optionTags(option, lowestPrice, shortestTransit)}</div>
+    <article class="offer-card ${isBest ? "is-best" : ""} ${stateClass}" data-offer-index="${index}" data-network-source="${option.is_warp === true ? "direct" : "carrier"}">
+      <div class="offer-tags">${submitted ? '<span class="offer-tag offer-tag-submitted">REQUEST SENT ✓</span>' : ""}${optionTags(option, lowestPrice, shortestTransit)}</div>
       <div class="carrier-heading">
         <span class="carrier-avatar" aria-hidden="true">${monogram(carrier)}</span>
         <div><h3 title="${escapeHtml(carrier)}">${escapeHtml(carrier)}</h3><small>${escapeHtml(option.service_level || "Service level not provided")}</small></div>
@@ -326,7 +357,7 @@ function renderCarrierCard(option, index, lowestPrice, shortestTransit) {
       <dl class="offer-metrics">
         <div><dt>Estimated Transit</dt><dd>${escapeHtml(transitText(option.transit_days))}</dd></div>
       </dl>
-      <button class="offer-select" type="button" data-select-offer="${index}">Select Quote</button>
+      <button class="offer-select" type="button" data-select-offer="${index}">${submitted ? "View Request" : (selected ? "Selected Quote" : "Select Quote")}</button>
     </article>`;
 }
 
@@ -402,13 +433,17 @@ function renderNetworkResult(data) {
     delivery_date: delivery,
     expires_at: expiration
   };
+  const identity = quoteIdentity(quote);
+  const submitted = Boolean(submittedRequestFor(quote));
+  const selected = !submitted && identity === quoteState.selectedQuoteKey;
 
   $("#quoteResult").innerHTML = `
     <div class="results-toolbar">
       <div><p class="section-kicker results-eyebrow">FULL TRUCKLOAD RATE</p><h2>Your FTL Quote</h2></div>
     </div>
-    <article class="network-offer ftl-offer">
+    <article class="network-offer ftl-offer ${submitted ? "is-submitted" : (selected ? "is-selected" : "")}">
       <div class="ftl-primary">
+        ${submitted ? '<span class="offer-tag offer-tag-submitted">REQUEST SENT ✓</span>' : ""}
         <div><p class="ftl-label">EQUIPMENT</p><h3>${equipmentLabel}</h3></div>
         <div class="offer-price">${escapeHtml(formatPrice(quote.price_usd))}<small>USD</small></div>
       </div>
@@ -417,7 +452,7 @@ function renderNetworkResult(data) {
         <div><span>Pickup Date</span><strong>${escapeHtml(humanDate(pickup))}</strong></div>
         <div><span>Delivery Date</span><strong>${escapeHtml(humanDate(delivery))}</strong></div>
       </div>
-      <button id="selectNetwork" class="offer-select" type="button">Select Quote</button>
+      <button id="selectNetwork" class="offer-select" type="button">${submitted ? "View Request" : (selected ? "Selected Quote" : "Select Quote")}</button>
     </article>`;
   $("#selectNetwork").addEventListener("click", () => openQuoteDialog(quote));
 }
@@ -455,19 +490,57 @@ function summaryMarkup(quote) {
     <div><span>Carrier</span><strong>${escapeHtml(quote.carrier_name || "Lodestar Logistics")}</strong></div>
     <div><span>Price</span><strong>${escapeHtml(formatPrice(quote.price_usd))} USD</strong></div>
     <div><span>Transit Time</span><strong>${escapeHtml(transitText(quote.transit_days))}</strong></div>
-    <div><span>Service Level</span><strong>${escapeHtml(quote.service_level || "Not provided")}</strong></div>
-    <div><span>Quote ID</span><strong>${escapeHtml(quote.quote_id || "Not provided")}</strong></div>`;
+    <div><span>Service Level</span><strong>${escapeHtml(quote.service_level || "Not provided")}</strong></div>`;
+}
+
+function renderQuoteRequestState(quote, { resetForm = false } = {}) {
+  const form = $("#quoteRequestForm");
+  const success = $("#quoteRequestSuccess");
+  const error = $("#quoteRequestError");
+  const button = $("#submitQuoteRequest");
+  const submitted = submittedRequestFor(quote);
+  error.hidden = true;
+  error.textContent = "";
+  if (submitted) {
+    form.hidden = true;
+    success.hidden = false;
+    return;
+  }
+  if (resetForm) form.reset();
+  button.disabled = false;
+  button.textContent = "Submit Quote Request";
+  form.hidden = false;
+  success.hidden = true;
+}
+
+function refreshQuoteCardState(quote) {
+  if (quote.public_mode === "ftl") {
+    const card = $(".network-offer");
+    if (!card) return;
+    const submitted = Boolean(submittedRequestFor(quote));
+    card.classList.toggle("is-selected", !submitted);
+    card.classList.toggle("is-submitted", submitted);
+    card.querySelector(".offer-tag-submitted")?.remove();
+    if (submitted) {
+      card.querySelector(".ftl-primary")?.insertAdjacentHTML(
+        "afterbegin",
+        '<span class="offer-tag offer-tag-submitted">REQUEST SENT ✓</span>'
+      );
+    }
+    const button = $("#selectNetwork");
+    if (button) button.textContent = submitted ? "View Request" : "Selected Quote";
+    return;
+  }
+  renderMarketResults();
 }
 
 function openQuoteDialog(quote) {
   if (!quote) return;
   quoteState.selectedQuote = quote;
+  quoteState.selectedQuoteKey = quoteIdentity(quote);
   $("#selectedQuoteSummary").innerHTML = summaryMarkup(quote);
-  $("#quoteRequestForm").reset();
-  $("#quoteRequestForm").hidden = false;
-  $("#quoteRequestSuccess").hidden = true;
-  $("#quoteRequestError").hidden = true;
-  $("#quoteRequestError").textContent = "";
+  renderQuoteRequestState(quote, { resetForm: !submittedRequestFor(quote) });
+  refreshQuoteCardState(quote);
   const dialog = $("#quoteDialog");
   if (typeof dialog.showModal === "function") dialog.showModal();
   else dialog.setAttribute("open", "");
@@ -518,13 +591,20 @@ $("#quoteRequestForm").addEventListener("submit", async (event) => {
   const form = event.currentTarget;
   if (!form.reportValidity()) return;
   const requestToken = quoteState.selectedQuote?.request_token;
+  const quoteKey = quoteIdentity(quoteState.selectedQuote);
   const error = $("#quoteRequestError");
+  if (quoteState.submittedRequests.has(quoteKey)) {
+    renderQuoteRequestState(quoteState.selectedQuote);
+    return;
+  }
+  if (quoteState.submittingQuoteKeys.has(quoteKey)) return;
   if (!requestToken) {
     error.textContent = "This quote can no longer be submitted. Please request a new quote.";
     error.hidden = false;
     return;
   }
   const button = $("#submitQuoteRequest");
+  quoteState.submittingQuoteKeys.add(quoteKey);
   button.disabled = true;
   button.textContent = "Submitting…";
   error.hidden = true;
@@ -541,9 +621,15 @@ $("#quoteRequestForm").addEventListener("submit", async (event) => {
     });
     const result = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(String(result.detail || "Unable to submit this quote request."));
-    form.hidden = true;
-    $("#quoteRequestSuccess").hidden = false;
+    quoteState.submittedRequests.set(quoteKey, {
+      requestId: result.request_id || "",
+      submittedAt: Date.now()
+    });
+    quoteState.submittingQuoteKeys.delete(quoteKey);
+    renderQuoteRequestState(quoteState.selectedQuote);
+    refreshQuoteCardState(quoteState.selectedQuote);
   } catch (requestError) {
+    quoteState.submittingQuoteKeys.delete(quoteKey);
     error.textContent = requestError.message;
     error.hidden = false;
     button.disabled = false;

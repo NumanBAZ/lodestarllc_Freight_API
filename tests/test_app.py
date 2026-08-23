@@ -1118,8 +1118,9 @@ class FreightQuoteTests(unittest.TestCase):
         start = javascript.index("function summaryMarkup")
         end = javascript.index("function openQuoteDialog", start)
         summary = javascript[start:end]
-        for label in ("Carrier", "Price", "Transit Time", "Service Level", "Quote ID"):
+        for label in ("Carrier", "Price", "Transit Time", "Service Level"):
             self.assertIn(f"<span>{label}</span>", summary)
+        self.assertNotIn("<span>Quote ID</span>", summary)
         self.assertNotIn("Freight Type", summary)
 
     def test_public_results_hide_technical_fields_and_use_compact_header(self) -> None:
@@ -1247,14 +1248,51 @@ class FreightQuoteTests(unittest.TestCase):
         self.assertEqual(html.count('href="tel:+19082243764"'), 2)
         self.assertEqual(html.count('href="mailto:info@lodestarllc.com"'), 2)
         self.assertIn('id="phoneLink"', html)
-        self.assertIn(">Call Now</a>", html)
+        self.assertIn(">Call</a>", html)
         self.assertIn('id="emailLink"', html)
-        self.assertIn(">Send Email</a>", html)
+        self.assertIn(">Email</a>", html)
         self.assertNotIn("dialog-contact-copy", html + css)
         self.assertNotIn("requestLink", html + javascript)
         self.assertNotIn("Request Confirmation", html)
-        self.assertIn("background: #2563eb", css)
-        self.assertIn("grid-template-columns: 1fr 1fr", css)
+        self.assertIn("min-height:38px", css)
+        self.assertIn("background:rgba(244,184,0,.1)", css)
+
+    def test_public_quote_request_has_persistent_submitted_success_state(self) -> None:
+        html = Path("static/index.html").read_text(encoding="utf-8")
+        javascript = Path("static/app.js").read_text(encoding="utf-8")
+        css = Path("static/style.css").read_text(encoding="utf-8")
+
+        self.assertIn("submittedRequests: new Map()", javascript)
+        self.assertIn("submittingQuoteKeys: new Set()", javascript)
+        self.assertIn("function quoteIdentity(quote)", javascript)
+        self.assertIn("quoteState.submittedRequests.has(quoteKey)", javascript)
+        self.assertIn("quoteState.submittingQuoteKeys.has(quoteKey)", javascript)
+        self.assertIn("quoteState.submittedRequests.set(quoteKey", javascript)
+        self.assertIn("renderQuoteRequestState(quote", javascript)
+        self.assertIn("form.hidden = true", javascript)
+        self.assertIn("success.hidden = false", javascript)
+        self.assertIn("REQUEST SENT ✓", javascript)
+        self.assertIn("is-submitted", javascript)
+        self.assertIn(".offer-card.is-submitted", css)
+        self.assertIn("border-color:#35b978", css)
+        self.assertIn("Quote Request Sent", html)
+        self.assertIn(
+            "Your selected quote has been sent to Lodestar Logistics.",
+            html,
+        )
+        self.assertIn(
+            "Our team can contact you using the information you provided.",
+            html,
+        )
+
+    def test_public_debug_and_modal_hide_quote_identifiers_but_state_keeps_them(self) -> None:
+        html = Path("static/index.html").read_text(encoding="utf-8")
+        javascript = Path("static/app.js").read_text(encoding="utf-8")
+        self.assertNotIn("Quote ID", html + javascript)
+        self.assertNotIn("Option ID", html + javascript)
+        self.assertIn('"quote_id"', javascript)
+        self.assertIn('"option_id"', javascript)
+        self.assertIn('new Set(["quote_id", "option_id", "request_token", "bookable"])', javascript)
 
     def test_raw_response_is_gated_by_debug_query_parameter(self) -> None:
         html = Path("static/index.html").read_text(encoding="utf-8")

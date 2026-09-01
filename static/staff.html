@@ -48,26 +48,48 @@
         <p>Bookings require a second confirmation and are submitted only from the Lodestar backend.</p>
       </div>
 
-      <section class="panel customer-requests-panel">
+      <nav class="staff-workspace-tabs" role="tablist" aria-label="Staff workspace">
+        <button id="customerRequestsTab" class="staff-workspace-tab is-active" type="button" role="tab" aria-selected="true" aria-controls="customerRequestsWorkspace" data-staff-workspace="requests">
+          <span>Customer Requests</span><span id="newRequestCount" class="new-request-count" hidden>0</span>
+        </button>
+        <button id="createStaffQuoteTab" class="staff-workspace-tab" type="button" role="tab" aria-selected="false" aria-controls="staffQuoteWorkspace" data-staff-workspace="quote">Create Staff Quote</button>
+      </nav>
+
+      <section id="customerRequestsWorkspace" class="panel customer-requests-panel staff-workspace-panel" role="tabpanel" aria-labelledby="customerRequestsTab">
         <div class="customer-requests-heading">
           <div><p class="eyebrow">CUSTOMER INTAKE</p><h2>Customer Quote Requests</h2></div>
           <button id="refreshCustomerRequests" class="button button-quiet" type="button">Refresh</button>
         </div>
-        <div id="requestStatusFilters" class="request-status-filters" aria-label="Filter quote requests by status">
-          <button class="request-filter is-active" type="button" data-request-filter="all" aria-pressed="true">All</button>
-          <button class="request-filter" type="button" data-request-filter="new" aria-pressed="false">New</button>
-          <button class="request-filter" type="button" data-request-filter="approved" aria-pressed="false">Approved</button>
-          <button class="request-filter" type="button" data-request-filter="rejected" aria-pressed="false">Rejected</button>
-          <button class="request-filter" type="button" data-request-filter="booked" aria-pressed="false">Booked</button>
+        <div class="request-list-controls">
+          <div id="requestStatusFilters" class="request-status-filters" aria-label="Filter quote requests by status">
+            <button class="request-filter is-active" type="button" data-request-filter="all" aria-pressed="true">All</button>
+            <button class="request-filter" type="button" data-request-filter="new" aria-pressed="false">New</button>
+            <button class="request-filter" type="button" data-request-filter="approved" aria-pressed="false">Approved</button>
+            <button class="request-filter" type="button" data-request-filter="rejected" aria-pressed="false">Rejected</button>
+            <button class="request-filter" type="button" data-request-filter="booked" aria-pressed="false">Booked</button>
+          </div>
+          <label class="request-search"><span>Search requests</span><input id="requestSearch" type="search" autocomplete="off" placeholder="Customer, route, carrier, ID or email" /></label>
         </div>
         <p id="customerRequestsMessage" class="requests-message">Loading customer quote requests…</p>
         <div class="customer-request-columns" aria-hidden="true">
           <span>Customer</span><span>Route</span><span>Carrier</span><span>Price</span><span>Freight Type</span><span>Date</span><span>Status</span>
         </div>
         <div id="customerRequestsList" class="customer-requests-list" hidden></div>
+        <nav id="requestPagination" class="request-pagination" aria-label="Customer request pages" hidden>
+          <button id="previousRequestPage" class="button button-quiet" type="button">Previous</button>
+          <span id="requestPageStatus" aria-live="polite">Page 1 of 1</span>
+          <button id="nextRequestPage" class="button button-quiet" type="button">Next</button>
+        </nav>
+        <section id="customerBookingResult" class="results" aria-live="polite" hidden></section>
       </section>
 
-      <form id="staffQuoteForm" class="panel quote-form">
+      <section id="staffQuoteWorkspace" class="staff-quote-workspace staff-workspace-panel" role="tabpanel" aria-labelledby="createStaffQuoteTab" hidden>
+        <div class="staff-quote-heading">
+          <p class="eyebrow">STAFF PRICING</p>
+          <h2>Create Staff Quote</h2>
+          <p>Get live freight pricing and book eligible shipments.</p>
+        </div>
+        <form id="staffQuoteForm" class="panel quote-form">
         <fieldset class="mode-picker">
           <legend>Freight Mode</legend>
           <label><input type="radio" name="mode" value="ltl" required /><span>LTL</span></label>
@@ -111,9 +133,10 @@
         </div>
         <p id="quoteError" class="form-error" role="alert" hidden></p>
         <button id="quoteButton" class="button button-primary" type="submit">Get Staff Quote</button>
-      </form>
+        </form>
 
-      <section id="staffResults" class="results" aria-live="polite" hidden></section>
+        <section id="staffResults" class="results" aria-live="polite" hidden></section>
+      </section>
     </section>
   </main>
 

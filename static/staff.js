@@ -11,10 +11,19 @@ const staffState = {
   selectedQuote: null,
   selectedCustomerRequest: null,
   customerRequests: [],
+  activeWorkspace: "requests",
   requestFilter: "all",
+  requestSearch: "",
+  requestPage: 1,
+  requestPageSize: 20,
+  requestTotal: 0,
+  requestTotalPages: 1,
+  newRequestCount: 0,
   lastPayload: null,
   bookingPending: false
 };
+
+let requestSearchTimer;
 
 const staffLocations = window.LodestarLocationResolver.attach([
   { inputId: "originLocation", zipId: "originZip", cityId: "originCity", stateId: "originState", optionsId: "originLocationOptions", errorId: "originLocationError", label: "Origin" },
@@ -80,6 +89,10 @@ function renderAuthState(authState, session = {}) {
     staffState.selectedQuote = null;
     staffState.selectedCustomerRequest = null;
     staffState.customerRequests = [];
+    staffState.requestPage = 1;
+    staffState.requestTotal = 0;
+    staffState.requestTotalPages = 1;
+    staffState.newRequestCount = 0;
   }
 
   $("#authLoading").hidden = !checking;
@@ -87,6 +100,19 @@ function renderAuthState(authState, session = {}) {
   $("#panelView").hidden = !authenticated;
   $("#staffIdentity").hidden = !authenticated;
   $("#staffUsername").textContent = staffState.username;
+  if (authenticated) renderStaffWorkspace("requests");
+}
+
+function renderStaffWorkspace(workspace) {
+  const activeWorkspace = workspace === "quote" ? "quote" : "requests";
+  staffState.activeWorkspace = activeWorkspace;
+  $("#customerRequestsWorkspace").hidden = activeWorkspace !== "requests";
+  $("#staffQuoteWorkspace").hidden = activeWorkspace !== "quote";
+  $$('[data-staff-workspace]').forEach((button) => {
+    const active = button.dataset.staffWorkspace === activeWorkspace;
+    button.classList.toggle("is-active", active);
+    button.setAttribute("aria-selected", String(active));
+  });
 }
 
 async function restoreSession() {
@@ -190,16 +216,24 @@ function requestRow(request) {
 function renderCustomerRequests() {
   const message = $("#customerRequestsMessage");
   const list = $("#customerRequestsList");
-  const requests = staffState.customerRequests.filter((request) => (
-    staffState.requestFilter === "all" || request.status === staffState.requestFilter
-  ));
+  const pagination = $("#requestPagination");
+  const requests = staffState.customerRequests;
+  const count = $("#newRequestCount");
+  count.textContent = String(staffState.newRequestCount);
+  count.hidden = staffState.newRequestCount === 0;
+  $("#requestPageStatus").textContent = `Page ${staffState.requestPage} of ${staffState.requestTotalPages}`;
+  $("#previousRequestPage").disabled = staffState.requestPage <= 1;
+  $("#nextRequestPage").disabled = staffState.requestPage >= staffState.requestTotalPages;
+  pagination.hidden = staffState.requestTotal === 0;
   if (!requests.length) {
     list.hidden = true;
     list.innerHTML = "";
     message.hidden = false;
-    message.textContent = staffState.customerRequests.length
-      ? `No ${staffState.requestFilter} customer quote requests.`
-      : "No customer quote requests yet.";
+    message.textContent = staffState.requestSearch
+      ? "No customer quote requests match your search."
+      : staffState.requestFilter === "all"
+        ? "No customer quote requests yet."
+        : `No ${staffState.requestFilter} customer quote requests.`;
     return;
   }
   list.innerHTML = requests.map(requestRow).join("");
@@ -218,7 +252,13 @@ async function loadCustomerRequests() {
   message.textContent = "Loading customer quote requests…";
   list.hidden = true;
   try {
-    const response = await fetch("/api/staff/quote-requests", {
+    const query = new URLSearchParams({
+      page: String(staffState.requestPage),
+      page_size: String(staffState.requestPageSize),
+      status: staffState.requestFilter
+    });
+    if (staffState.requestSearch) query.set("search", staffState.requestSearch);
+    const response = await fetch(`/api/staff/quote-requests?${query}`, {
       headers: { "X-Staff-CSRF": staffState.csrfToken },
       cache: "no-store"
     });
@@ -230,6 +270,10 @@ async function loadCustomerRequests() {
     }
     if (!response.ok) throw new Error(errorMessage(result, "Unable to load customer quote requests."));
     staffState.customerRequests = Array.isArray(result.requests) ? result.requests : [];
+    staffState.requestPage = Number(result.page) || 1;
+    staffState.requestTotal = Number(result.total) || 0;
+    staffState.requestTotalPages = Number(result.total_pages) || 1;
+    staffState.newRequestCount = Number(result.new_count) || 0;
     renderCustomerRequests();
   } catch (error) {
     message.textContent = error.message;
@@ -450,6 +494,8 @@ $("#logoutButton").addEventListener("click", async () => {
     if (!response.ok) throw new Error("Unable to log out. Please try again.");
     $("#staffResults").hidden = true;
     $("#staffResults").innerHTML = "";
+    $("#customerBookingResult").hidden = true;
+    $("#customerBookingResult").innerHTML = "";
     $("#customerRequestsList").hidden = true;
     $("#customerRequestsList").innerHTML = "";
     staffState.customerRequests = [];
@@ -462,8 +508,9 @@ $("#logoutButton").addEventListener("click", async () => {
 
 $("#staffQuoteForm").addEventListener("submit", async (event) => {
   event.preventDefault();
+  const form = event.currentTarget;
   if (!await staffLocations.resolveAll()) return;
-  if (!event.currentTarget.reportValidity()) return;
+  if (!form.reportValidity()) return;
   showError($("#quoteError"), "");
   const mode = $('input[name="mode"]:checked')?.value;
   if (!mode) return;
@@ -529,7 +576,8 @@ $("#bookingForm").addEventListener("submit", async (event) => {
     const result = await response.json().catch(() => ({}));
     if (!response.ok || result.ok === false) throw new Error(errorMessage(result, "Booking could not be completed."));
     $("#bookingDialog").close();
-    $("#staffResults").innerHTML = `<div class="booking-success">
+    const bookingResult = result.customer_request_id ? $("#customerBookingResult") : $("#staffResults");
+    bookingResult.innerHTML = `<div class="booking-success">
       <p class="eyebrow">BOOKING CONFIRMED</p><h2>Shipment booked successfully</h2>
       <dl class="quote-facts">
         <div><dt>Shipment ID</dt><dd>${escapeHtml(result.shipment_id || "Not provided")}</dd></div>
@@ -538,6 +586,7 @@ $("#bookingForm").addEventListener("submit", async (event) => {
         <div><dt>Carrier</dt><dd>${escapeHtml(result.carrier || "Not provided")}</dd></div>
         <div><dt>Booked Price</dt><dd>${escapeHtml(formatPrice(result.booked_price))}</dd></div>
       </dl></div>`;
+    bookingResult.hidden = false;
     if (result.customer_request_id) {
       $("#requestDetailDialog").close();
       await loadCustomerRequests();
@@ -555,20 +604,43 @@ $("#closeBooking").addEventListener("click", () => {
 });
 
 $("#refreshCustomerRequests").addEventListener("click", loadCustomerRequests);
+$$('[data-staff-workspace]').forEach((button) => button.addEventListener("click", () => {
+  renderStaffWorkspace(button.dataset.staffWorkspace);
+}));
 $$('[data-request-filter]').forEach((button) => button.addEventListener("click", () => {
   staffState.requestFilter = button.dataset.requestFilter;
+  staffState.requestPage = 1;
   $$('[data-request-filter]').forEach((filterButton) => {
     const active = filterButton === button;
     filterButton.classList.toggle("is-active", active);
     filterButton.setAttribute("aria-pressed", String(active));
   });
-  renderCustomerRequests();
+  loadCustomerRequests();
 }));
+$("#requestSearch").addEventListener("input", (event) => {
+  window.clearTimeout(requestSearchTimer);
+  requestSearchTimer = window.setTimeout(() => {
+    staffState.requestSearch = event.target.value.trim();
+    staffState.requestPage = 1;
+    loadCustomerRequests();
+  }, 250);
+});
+$("#previousRequestPage").addEventListener("click", () => {
+  if (staffState.requestPage <= 1) return;
+  staffState.requestPage -= 1;
+  loadCustomerRequests();
+});
+$("#nextRequestPage").addEventListener("click", () => {
+  if (staffState.requestPage >= staffState.requestTotalPages) return;
+  staffState.requestPage += 1;
+  loadCustomerRequests();
+});
 $("#closeRequestDetail").addEventListener("click", () => $("#requestDetailDialog").close());
 $("#approveCustomerRequest").addEventListener("click", async (event) => {
-  event.currentTarget.disabled = true;
+  const button = event.currentTarget;
+  button.disabled = true;
   await updateCustomerRequestStatus("approved");
-  event.currentTarget.disabled = false;
+  button.disabled = false;
 });
 $("#rejectCustomerRequest").addEventListener("click", () => {
   $("#rejectRequestForm").reset();

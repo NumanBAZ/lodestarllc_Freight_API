@@ -663,7 +663,7 @@ class FreightQuoteTests(unittest.TestCase):
         self.assertIn("Customer Quote Requests", staff_html)
         self.assertIn('id="customerRequestsList"', staff_html)
         self.assertIn('id="requestDetailDialog"', staff_html)
-        self.assertIn('fetch("/api/staff/quote-requests"', staff_javascript)
+        self.assertIn('fetch(`/api/staff/quote-requests?${query}`', staff_javascript)
         self.assertIn('/status`, {', staff_javascript)
         self.assertIn("booking_quote_token", staff_javascript)
         for status in ("all", "new", "approved", "rejected", "booked"):
@@ -676,6 +676,14 @@ class FreightQuoteTests(unittest.TestCase):
         self.assertIn("53' Dry Van (FTL)", public_html)
         self.assertIn("53' Dry Van (FTL)", staff_html)
         self.assertIn("freightTypeLabel(request.freight_type)", staff_javascript)
+        self.assertIn('id="customerRequestsTab"', staff_html)
+        self.assertIn('id="createStaffQuoteTab"', staff_html)
+        self.assertIn('id="requestSearch"', staff_html)
+        self.assertIn('id="requestPagination"', staff_html)
+        self.assertIn('data-staff-workspace="requests"', staff_html)
+        self.assertIn('data-staff-workspace="quote"', staff_html)
+        self.assertIn('requestPageSize: 20', staff_javascript)
+        self.assertIn('staffState.requestPage = 1', staff_javascript)
 
     def test_public_and_staff_share_location_resolver_ui(self) -> None:
         public_html = Path("static/index.html").read_text(encoding="utf-8")
@@ -885,6 +893,67 @@ class FreightQuoteTests(unittest.TestCase):
             )
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["requests"][0]["status"], "new")
+
+    def test_staff_request_server_pagination_filter_search_and_new_count(self) -> None:
+        statuses = ("new", "approved", "rejected", "booked")
+        records = []
+        for index in range(100):
+            records.append(
+                {
+                    "id": f"qr_fixture{index:03d}abcdefghijklmnop",
+                    "customer": {
+                        "full_name": f"Customer {index:03d}",
+                        "email": f"customer{index:03d}@example.com",
+                    },
+                    "freight_type": "LTL",
+                    "shipment": {
+                        "origin_zip": "90012",
+                        "origin_city": "Los Angeles",
+                        "origin_state": "CA",
+                        "destination_zip": "94105",
+                        "destination_city": "San Francisco",
+                        "destination_state": "CA",
+                    },
+                    "selected_quote": {
+                        "carrier_name": f"Carrier {index % 5}",
+                        "price_usd": 300 + index,
+                    },
+                    "created_at": f"{date(2026, 8, 1) + timedelta(days=index)}T12:00:00+00:00",
+                    "status": statuses[index % len(statuses)],
+                }
+            )
+
+        csrf = self.login_staff()
+        headers = {"X-Staff-CSRF": csrf}
+        with patch.object(app_module, "list_quote_requests", AsyncMock(return_value=records)):
+            first_page = self.client.get(
+                "/api/staff/quote-requests?page=1&page_size=20&status=all",
+                headers=headers,
+            )
+            second_page = self.client.get(
+                "/api/staff/quote-requests?page=2&page_size=20&status=all",
+                headers=headers,
+            )
+            approved = self.client.get(
+                "/api/staff/quote-requests?page=1&page_size=20&status=approved",
+                headers=headers,
+            )
+            searched = self.client.get(
+                "/api/staff/quote-requests?page=1&page_size=20&status=all&search=customer042%40example.com",
+                headers=headers,
+            )
+
+        self.assertEqual(first_page.status_code, 200)
+        self.assertEqual(len(first_page.json()["requests"]), 20)
+        self.assertEqual(first_page.json()["total"], 100)
+        self.assertEqual(first_page.json()["total_pages"], 5)
+        self.assertEqual(first_page.json()["new_count"], 25)
+        self.assertEqual(first_page.json()["requests"][0]["customer"], "Customer 099")
+        self.assertEqual(second_page.json()["requests"][0]["customer"], "Customer 079")
+        self.assertEqual(approved.json()["total"], 25)
+        self.assertTrue(all(item["status"] == "approved" for item in approved.json()["requests"]))
+        self.assertEqual(searched.json()["total"], 1)
+        self.assertEqual(searched.json()["requests"][0]["id"], "qr_fixture042abcdefghijklmnop")
 
     def test_staff_frontend_requires_second_confirmation_and_hides_unbookable_actions(self) -> None:
         html = Path("static/staff.html").read_text(encoding="utf-8")

@@ -42,6 +42,8 @@ LOCATION_METADATA_FIELDS = (
     "destination_state",
 )
 QUOTE_REQUEST_STATUSES = {"new", "approved", "rejected", "booked"}
+STAFF_REQUEST_PAGE_SIZE = 20
+STAFF_REQUEST_SCAN_LIMIT = 1000
 STAFF_STATUS_TRANSITIONS = {
     "new": {"approved", "rejected"},
     "rejected": {"approved"},
@@ -565,7 +567,7 @@ async def get_quote_request(request_id: str) -> dict[str, Any] | None:
 
 async def list_quote_requests(limit: int = 100) -> list[dict[str, Any]]:
     request_ids = await upstash_command(
-        ["ZREVRANGE", QUOTE_REQUEST_INDEX_KEY, 0, max(0, min(limit, 100) - 1)]
+        ["ZREVRANGE", QUOTE_REQUEST_INDEX_KEY, 0, max(0, min(limit, STAFF_REQUEST_SCAN_LIMIT) - 1)]
     )
     if not isinstance(request_ids, list) or not request_ids:
         return []
@@ -987,11 +989,70 @@ async def staff_session(request: Request, response: Response) -> dict[str, Any]:
 
 
 @app.get("/api/staff/quote-requests")
-async def staff_quote_requests(request: Request) -> dict[str, Any]:
+async def staff_quote_requests(
+    request: Request,
+    page: int = 1,
+    page_size: int = STAFF_REQUEST_PAGE_SIZE,
+    status: str = "all",
+    search: str = "",
+) -> dict[str, Any]:
     session = require_staff(request)
     require_csrf(request, session)
-    records = await list_quote_requests()
-    records.sort(key=lambda record: record.get("status") != "new")
+    if page < 1:
+        raise HTTPException(status_code=400, detail="Page must be at least 1")
+    if page_size != STAFF_REQUEST_PAGE_SIZE:
+        raise HTTPException(status_code=400, detail="Page size must be 20")
+    normalized_status = status.strip().lower()
+    if normalized_status != "all" and normalized_status not in QUOTE_REQUEST_STATUSES:
+        raise HTTPException(status_code=400, detail="Invalid request status filter")
+    normalized_search = search.strip().lower()
+    if len(normalized_search) > 120:
+        raise HTTPException(status_code=400, detail="Search is too long")
+
+    records = await list_quote_requests(limit=STAFF_REQUEST_SCAN_LIMIT)
+    records.sort(
+        key=lambda record: (
+            str(record.get("created_at") or ""),
+            record.get("status") == "new",
+        ),
+        reverse=True,
+    )
+    new_count = sum(record.get("status") == "new" for record in records)
+
+    def matches_search(record: dict[str, Any]) -> bool:
+        if not normalized_search:
+            return True
+        customer = record.get("customer") or {}
+        shipment = record.get("shipment") or {}
+        selected_quote = record.get("selected_quote") or {}
+        searchable = " ".join(
+            str(value or "")
+            for value in (
+                record.get("id"),
+                customer.get("full_name"),
+                customer.get("email"),
+                shipment.get("origin_zip"),
+                shipment.get("origin_city"),
+                shipment.get("origin_state"),
+                shipment.get("destination_zip"),
+                shipment.get("destination_city"),
+                shipment.get("destination_state"),
+                selected_quote.get("carrier_name"),
+            )
+        ).lower()
+        return normalized_search in searchable
+
+    filtered_records = [
+        record
+        for record in records
+        if (normalized_status == "all" or record.get("status") == normalized_status)
+        and matches_search(record)
+    ]
+    total = len(filtered_records)
+    total_pages = max(1, math.ceil(total / page_size))
+    current_page = min(page, total_pages)
+    start = (current_page - 1) * page_size
+    paginated_records = filtered_records[start : start + page_size]
     return {
         "requests": [
             {
@@ -1011,8 +1072,13 @@ async def staff_quote_requests(request: Request) -> dict[str, Any]:
                 "created_at": record.get("created_at"),
                 "status": record.get("status"),
             }
-            for record in records
-        ]
+            for record in paginated_records
+        ],
+        "page": current_page,
+        "page_size": page_size,
+        "total": total,
+        "total_pages": total_pages,
+        "new_count": new_count,
     }
 
 

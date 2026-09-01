@@ -1238,7 +1238,9 @@ class FreightQuoteTests(unittest.TestCase):
         html = Path("static/index.html").read_text(encoding="utf-8")
         css = Path("static/style.css").read_text(encoding="utf-8").lower()
         javascript = Path("static/app.js").read_text(encoding="utf-8")
-        self.assertIn('class="dialog-info" role="note"', html)
+        self.assertIn('class="dialog-contact" aria-labelledby="dialogContactTitle"', html)
+        self.assertIn('class="dialog-contact-message" role="note"', html)
+        self.assertIn('class="dialog-contact-row"', html)
         self.assertIn(
             "Contact Lodestar Logistics to confirm and finalize this quote.",
             html,
@@ -1254,8 +1256,11 @@ class FreightQuoteTests(unittest.TestCase):
         self.assertNotIn("dialog-contact-copy", html + css)
         self.assertNotIn("requestLink", html + javascript)
         self.assertNotIn("Request Confirmation", html)
-        self.assertIn("min-height:38px", css)
-        self.assertIn("background:rgba(244,184,0,.1)", css)
+        self.assertEqual(html.count('class="dialog-contact-item"'), 2)
+        self.assertIn("grid-template-columns:minmax(0,1fr) auto", css)
+        self.assertIn("grid-template-columns:repeat(2,96px)", css)
+        self.assertIn("height:42px", css)
+        self.assertIn("background:var(--yellow)", css)
 
     def test_public_quote_request_has_persistent_submitted_success_state(self) -> None:
         html = Path("static/index.html").read_text(encoding="utf-8")

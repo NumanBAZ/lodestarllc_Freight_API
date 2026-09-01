@@ -221,20 +221,22 @@
       <p>Your selected quote has been sent to Lodestar Logistics.</p>
       <p>Our team can contact you using the information you provided.</p>
     </div>
-    <div class="dialog-info" role="note">
-      <span class="dialog-info-icon" aria-hidden="true">i</span>
-      <div>
-        <strong>Contact Lodestar Logistics to confirm and finalize this quote.</strong>
+    <section class="dialog-contact" aria-labelledby="dialogContactTitle">
+      <div class="dialog-contact-message" role="note">
+        <span class="dialog-info-icon" aria-hidden="true">i</span>
+        <strong id="dialogContactTitle">Contact Lodestar Logistics to confirm and finalize this quote.</strong>
+      </div>
+      <div class="dialog-contact-row">
         <div class="dialog-contact-details">
-          <a href="tel:+19082243764"><span>Phone</span><b>(908) 224-3764</b></a>
-          <a href="mailto:info@lodestarllc.com"><span>Email</span><b>info@lodestarllc.com</b></a>
+          <a class="dialog-contact-item" href="tel:+19082243764"><span>Phone</span><b>(908) 224-3764</b></a>
+          <a class="dialog-contact-item" href="mailto:info@lodestarllc.com"><span>Email</span><b>info@lodestarllc.com</b></a>
+        </div>
+        <div class="contact-buttons">
+          <a id="phoneLink" class="contact-link contact-call" href="tel:+19082243764">Call</a>
+          <a id="emailLink" class="contact-link contact-email" href="mailto:info@lodestarllc.com">Email</a>
         </div>
       </div>
-    </div>
-    <div class="contact-buttons">
-      <a id="phoneLink" class="contact-link contact-call" href="tel:+19082243764">Call</a>
-      <a id="emailLink" class="contact-link contact-email" href="mailto:info@lodestarllc.com">Email</a>
-    </div>
+    </section>
   </dialog>
 
   <footer id="contact" class="app-footer">
